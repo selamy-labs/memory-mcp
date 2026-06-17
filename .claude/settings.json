@@ -1,0 +1,14 @@
+{
+  "extraKnownMarketplaces": {
+    "selamy-labs": {
+      "source": {
+        "source": "github",
+        "repo": "selamy-labs/agent-skills",
+        "ref": "v0.30.0"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "selamy-skills@selamy-labs": true
+  }
+}
