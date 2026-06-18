@@ -1,5 +1,8 @@
 # memory-mcp
 
+[![CI](https://github.com/selamy-labs/memory-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/selamy-labs/memory-mcp/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 `memory-mcp` is a small [Model Context Protocol](https://modelcontextprotocol.io)
 server over the fleet's **markdown-memory store**. It turns the read/write
 *calls* on that store — search, get, list, index, and careful write/update —
