@@ -11,20 +11,6 @@ permissions:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install
-        run: python -m pip install -e ".[test]"
-      - name: Style
-        run: |
-          ruff format --check .
-          ruff check .
-      - name: Test
-        run: |
-          coverage run -m pytest
-          coverage report --fail-under=95
+    uses: selamy-labs/.github/.github/workflows/python-ci.yml@main
+    with:
+      coverage-fail-under: 95
