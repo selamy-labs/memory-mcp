@@ -4,7 +4,7 @@
       "source": {
         "source": "github",
         "repo": "selamy-labs/agent-skills",
-        "ref": "v0.30.0"
+        "ref": "v0.34.0"
       }
     }
   },
