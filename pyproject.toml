@@ -31,6 +31,14 @@ dependencies = []
 mcp = [
   "mcp>=1.2",
 ]
+# Vendor-neutral OpenTelemetry auto-instrumentation (#743). Install alongside
+# `mcp`, then run the server under `opentelemetry-instrument` (see README) so
+# spans export via OTLP to a collector — never the console exporter, which would
+# corrupt the stdio JSON-RPC stream. The collector owns any Cloud Trace coupling.
+otel = [
+  "opentelemetry-distro>=0.48b0",
+  "opentelemetry-exporter-otlp>=1.27",
+]
 test = [
   "coverage[toml]>=7.6",
   "mcp>=1.2",
