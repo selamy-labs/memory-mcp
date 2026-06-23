@@ -1,0 +1,95 @@
+# Shared fleet semantic memory — Helm values.
+#
+# Phase-1 keeps this simple and cheap (rides the existing GKE cluster). No
+# external surface: a ClusterIP Service plus a NetworkPolicy that only admits the
+# agent namespaces. Secrets come from Google Secret Manager via ExternalSecrets;
+# nothing sensitive lives in this file or the image.
+
+# ArgoCD installs this chart; the Application passes argocd.enabled=false. The
+# key exists only so the agent-style Application parameter is a no-op here.
+argocd:
+  enabled: false
+
+nameOverride: ""
+fullnameOverride: "memory-mcp"
+
+image:
+  repository: ghcr.io/selamy-labs/memory-mcp
+  tag: ""           # defaults to .Chart.appVersion; set by CI to an immutable digest/tag
+  pullPolicy: IfNotPresent
+
+# imagePullSecrets sync from GSM via the fleet ghcr-pull ExternalSecret pattern.
+imagePullSecrets:
+  - name: ghcr-pull
+
+server:
+  replicas: 1
+  port: 8080
+  transport: streamable-http
+  embedder: hashing            # zero-cost, no API key, fully self-hosted (Phase-1 default)
+  ensureSchema: true           # create the pgvector schema on start (idempotent)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+postgres:
+  image: pgvector/pgvector:pg16
+  database: memory
+  user: memory
+  port: 5432
+  storage: 5Gi
+  storageClassName: ""         # cluster default
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# ExternalSecret: the Postgres password is generated once and stored in GSM,
+# synced into this namespace as a Secret. Created out-of-band (Terraform declares
+# the GSM container; the value is seeded once).
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  # GSM secret holding the Postgres password for this store.
+  gsmSecret: memory-mcp-pg-password
+  # Optional embedding API key (only when server.embedder=openai); off by default.
+  embeddingKey:
+    enabled: false
+    gsmSecret: memory-mcp-embedding-api-key
+
+# NetworkPolicy: only these namespaces may reach the MCP server. No Ingress, no
+# external surface. Add a namespace here to grant an agent access.
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - nash
+    - nolan
+    - reeve
+    - reid
+    - sable
+    - axel
+    - virtual-louie
+
+# Reindex CronJob: rebuilds the index from the markdown-in-git source of truth.
+# Phase-1 default is disabled because the markdown sources (orchestrator memory +
+# per-agent /opt/data/memories) are not yet mounted/cloned into this namespace;
+# enable once a source mount or git-clone init is wired (PR5 / follow-up).
+reindex:
+  enabled: false
+  schedule: "0 */6 * * *"
+  # Comma-separated path[:group_id] entries the CronJob indexes.
+  sources: ""
+
+otel:
+  enabled: false
+  endpoint: "http://otel-collector.otel-system.svc:4317"
