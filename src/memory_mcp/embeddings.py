@@ -125,13 +125,14 @@ class OpenAIEmbedder:
         self,
         *,
         transport: HttpTransport,
-        api_key: str,
+        api_key: str = "",
         model: str = "text-embedding-3-small",
         base_url: str = "https://api.openai.com/v1",
         dim: int = 1536,
     ) -> None:
-        if not api_key:
-            raise ValueError("OpenAIEmbedder requires an api_key")
+        # api_key is OPTIONAL: a self-hosted, in-cluster embedding model (e.g.
+        # HuggingFace TEI) typically needs no auth, which is the recommended $0
+        # true-semantic upgrade. When empty, no Authorization header is sent.
         self._transport = transport
         self._api_key = api_key
         self._model = model
@@ -143,12 +144,12 @@ class OpenAIEmbedder:
         return self._dim
 
     def embed(self, text: str) -> list[float]:
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         body = self._transport.post_json(
             f"{self._base_url}/embeddings",
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json={"model": self._model, "input": text},
         )
         try:

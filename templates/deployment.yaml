@@ -62,6 +62,16 @@ spec:
                 secretKeyRef:
                   name: {{ include "memory-mcp.fullname" . }}-pg
                   key: password
+            {{- if eq .Values.server.embedder "openai" }}
+            {{- with .Values.server.embedding.baseUrl }}
+            - name: MEMORY_EMBEDDING_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: MEMORY_EMBEDDING_MODEL
+              value: {{ .Values.server.embedding.model | quote }}
+            - name: MEMORY_EMBEDDING_DIM
+              value: {{ .Values.server.embedding.dim | quote }}
+            {{- end }}
             {{- if .Values.externalSecret.embeddingKey.enabled }}
             - name: MEMORY_EMBEDDING_API_KEY
               valueFrom:

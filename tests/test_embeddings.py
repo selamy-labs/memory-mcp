@@ -80,9 +80,18 @@ def test_openai_embedder_calls_endpoint_and_normalises():
     assert call["json"]["input"] == "hello"
 
 
-def test_openai_embedder_requires_api_key():
-    with pytest.raises(ValueError, match="requires an api_key"):
-        OpenAIEmbedder(transport=_StubTransport([1.0]), api_key="")
+def test_openai_embedder_no_auth_header_when_key_empty():
+    # A self-hosted in-cluster model (TEI) needs no auth: no Authorization header.
+    transport = _StubTransport([1.0, 0.0])
+    embedder = OpenAIEmbedder(transport=transport, dim=2, base_url="http://tei.memory.svc/v1")
+    embedder.embed("hi")
+    assert "Authorization" not in transport.calls[0]["headers"]
+
+
+def test_openai_embedder_sends_auth_header_when_key_present():
+    transport = _StubTransport([1.0, 0.0])
+    OpenAIEmbedder(transport=transport, api_key="sk-x", dim=2).embed("hi")
+    assert transport.calls[0]["headers"]["Authorization"] == "Bearer sk-x"
 
 
 def test_openai_embedder_rejects_dim_mismatch():
