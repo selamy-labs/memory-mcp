@@ -39,6 +39,12 @@ otel = [
   "opentelemetry-distro>=0.48b0",
   "opentelemetry-exporter-otlp>=1.27",
 ]
+# Postgres + pgvector backend (production durable store). Imported only inside
+# memory_mcp.pgvector_store.build_pg_store, so the package has no hard libpq
+# dependency and unit tests never need a database.
+pg = [
+  "psycopg[binary]>=3.2",
+]
 test = [
   "coverage[toml]>=7.6",
   "mcp>=1.2",
@@ -78,3 +84,8 @@ max-complexity = 12
 [tool.ruff.lint.per-file-ignores]
 # S101: asserts are the point of tests. S108: tests use fixed /tmp-style fake paths.
 "tests/**" = ["S101", "S108"]
+# S608: the only value ever interpolated into SQL here is the table name, which
+# is validated as a Python identifier in PgVectorStore.__init__ (isidentifier());
+# every user/runtime value is a bound %s parameter. So the f-strings are not an
+# injection vector, but the linter cannot prove the identifier constraint.
+"src/memory_mcp/pgvector_store.py" = ["S608"]
