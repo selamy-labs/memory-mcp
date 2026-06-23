@@ -83,11 +83,59 @@ def test_build_store_memory_backend(monkeypatch):
     assert isinstance(srv._build_store(64), InMemoryVectorStore)
 
 
-def test_build_store_pgvector_requires_dsn(monkeypatch):
+def test_build_store_pgvector_requires_host_or_dsn(monkeypatch):
     monkeypatch.setenv("MEMORY_BACKEND", "pgvector")
     monkeypatch.delenv("MEMORY_PG_DSN", raising=False)
-    with pytest.raises(SystemExit, match="requires MEMORY_PG_DSN"):
+    monkeypatch.delenv("MEMORY_PG_HOST", raising=False)
+    with pytest.raises(SystemExit, match="MEMORY_PG_HOST"):
         srv._build_store(64)
+
+
+def test_build_store_pgvector_prefers_discrete_params(monkeypatch):
+    import sys
+    import types
+
+    captured = {}
+    fake = types.ModuleType("psycopg")
+
+    def fake_connect(**kwargs):
+        captured.update(kwargs)
+
+        class _C:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return None
+
+            def cursor(self):
+                return self
+
+            def execute(self, *a, **k):
+                return None
+
+            def fetchone(self):
+                return (0,)
+
+            def commit(self):
+                return None
+
+        return _C()
+
+    fake.connect = fake_connect
+    monkeypatch.setitem(sys.modules, "psycopg", fake)
+    monkeypatch.setenv("MEMORY_BACKEND", "pgvector")
+    monkeypatch.setenv("MEMORY_PG_HOST", "pg.host")
+    monkeypatch.setenv("MEMORY_PG_PASSWORD", "a/b+c=d")
+    monkeypatch.delenv("MEMORY_ENSURE_SCHEMA", raising=False)
+    from memory_mcp.pgvector_store import PgVectorStore
+
+    store = srv._build_store(64)
+    assert isinstance(store, PgVectorStore)
+    # Force a connection to confirm discrete params reached psycopg verbatim.
+    store.count()
+    assert captured["host"] == "pg.host"
+    assert captured["password"] == "a/b+c=d"
 
 
 def test_build_store_pgvector_with_fake_psycopg(monkeypatch):

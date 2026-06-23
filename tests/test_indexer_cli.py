@@ -93,9 +93,33 @@ def test_run_git_handles_missing_binary(monkeypatch, tmp_path):
     assert cli._run_git(["log"], cwd=str(tmp_path)) == ""
 
 
-def test_build_components_default(tmp_path):
+def test_build_components_default(tmp_path, monkeypatch):
     from memory_mcp.__main__ import build_components
 
+    monkeypatch.delenv("MEMORY_BACKEND", raising=False)
     mem = build_components()
     mem.add_memory("x", "d", "feedback", "b", updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert mem.get_memory("x")["name"] == "x"
+
+
+def test_build_components_uses_env_backend_when_set(monkeypatch):
+    from memory_mcp.__main__ import build_components
+
+    # With MEMORY_BACKEND set, build_components delegates to the server's
+    # env-driven builders so a reindex run writes to the configured store.
+    monkeypatch.setenv("MEMORY_BACKEND", "memory")
+    monkeypatch.setenv("MEMORY_EMBEDDER", "hashing")
+    mem = build_components()
+    mem.add_memory("y", "d", "feedback", "b", updated_at=datetime(2026, 2, 2, tzinfo=timezone.utc))
+    assert mem.get_memory("y")["name"] == "y"
+
+
+def test_build_components_explicit_args_win_over_env(monkeypatch):
+    from memory_mcp.__main__ import build_components
+    from memory_mcp.embeddings import HashingEmbedder
+    from memory_mcp.vector_store import InMemoryVectorStore
+
+    monkeypatch.setenv("MEMORY_BACKEND", "pgvector")  # would fail to build a real store
+    mem = build_components(HashingEmbedder(dim=32), InMemoryVectorStore())
+    mem.add_memory("z", "d", "feedback", "b", updated_at=datetime(2026, 3, 3, tzinfo=timezone.utc))
+    assert mem.get_memory("z")["name"] == "z"

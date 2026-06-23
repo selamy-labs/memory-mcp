@@ -69,7 +69,8 @@ port-forward later; Phase-1 deliberately keeps the surface minimal.
 | Variable | Effect |
 | --- | --- |
 | `MEMORY_BACKEND` | `pgvector` (default in-cluster) or `memory` (in-RAM smoke test). |
-| `MEMORY_PG_DSN` | Postgres DSN; required for `pgvector`. Built by the chart from non-secret config + the password mounted from the synced Secret. |
+| `MEMORY_PG_HOST` / `MEMORY_PG_PORT` / `MEMORY_PG_USER` / `MEMORY_PG_DB` / `MEMORY_PG_PASSWORD` | Discrete Postgres connection params (preferred). The chart sets these; the password is mounted from the synced Secret. Discrete params are used (not a URL DSN) so a base64/special-char password can never be misparsed. |
+| `MEMORY_PG_DSN` | Fallback URL DSN for `pgvector` when `MEMORY_PG_HOST` is unset. |
 | `MEMORY_EMBEDDER` | `hashing` (default; zero-cost, no API key, self-hosted) or `openai`. |
 | `MEMORY_EMBEDDING_*` | `openai` embedder config (key/base-url/model/dim), read at call time. |
 | `MEMORY_ENSURE_SCHEMA` | `1` to create the pgvector schema on start (idempotent). |
