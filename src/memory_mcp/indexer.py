@@ -115,6 +115,40 @@ def _first_meaningful_line(body: str) -> str:
     return ""
 
 
+# A top-level ``date:`` (or ``updated:`` / ``created:``) line inside the leading
+# YAML frontmatter fence. This is the author's explicit recency for a document.
+_FRONTMATTER_DATE_RE = re.compile(
+    r"^(?:date|updated|created):\s*[\"']?(\d{4}-\d{2}-\d{2})",
+    re.MULTILINE,
+)
+
+
+def _date_from_frontmatter(text: str) -> datetime | None:
+    """Extract an explicit ``date:``/``updated:``/``created:`` from frontmatter.
+
+    Only looks inside the leading ``---`` fence so a date mentioned in the body
+    is never mistaken for the document's recency. Returns ``None`` when there is
+    no fenced frontmatter or no recognised date key. This is the most
+    authoritative recency signal — an author set it deliberately — so it ranks
+    above a filename date or a (possibly shallow-clone) git commit date.
+    """
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    if end is None:
+        return None
+    front = "\n".join(lines[1:end])
+    match = _FRONTMATTER_DATE_RE.search(front)
+    if not match:
+        return None
+    try:
+        year, month, day = (int(part) for part in match.group(1).split("-"))
+        return datetime(year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class _Candidate:
     """A parsed markdown file ready to index: contract fields + recency."""
@@ -133,9 +167,9 @@ def _build_candidate(relpath: str, text: str, modified_at: datetime | None) -> _
     ``type`` directly. A frontmatter-less markdown file is still indexed (the
     fleet has plenty of un-frontmattered notes) by synthesising a name from the
     filename, a description from its first line, and the default type. Recency is
-    the file's authored date, falling back to a date in its name; a file with no
-    usable date at all is reported as skipped (recency-honesty over silent
-    "now").
+    an explicit frontmatter ``date:`` if present, else a date in the filename,
+    else the file's git/mtime date; a file with no usable date at all is reported
+    as skipped (recency-honesty over silent "now").
     """
     name: str
     description: str
@@ -154,7 +188,11 @@ def _build_candidate(relpath: str, text: str, modified_at: datetime | None) -> _
         mem_type = _DEFAULT_TYPE
         body = text
 
-    updated_at = modified_at or _date_from_name(relpath)
+    # Recency precedence, most authoritative first: an explicit frontmatter date
+    # (the author set it) > a date in the filename > the file's git commit / mtime
+    # date. This keeps recency honest even when the source is a shallow clone
+    # (where every file shares the single cloned commit's date).
+    updated_at = _date_from_frontmatter(text) or _date_from_name(relpath) or modified_at
     if updated_at is None:
         return None
     return _Candidate(name=name, description=description, type=mem_type, body=body, updated_at=updated_at)

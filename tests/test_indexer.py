@@ -11,6 +11,7 @@ from memory_mcp.indexer import (
     MarkdownIndexer,
     MemorySource,
     _build_candidate,
+    _date_from_frontmatter,
     _date_from_name,
     _first_meaningful_line,
     _slugify,
@@ -65,11 +66,46 @@ def test_date_from_name():
     assert _date_from_name("bad-2026-13-40.md") is None  # invalid month/day -> None
 
 
+# A session-journal-style file: frontmatter with a `date:` but no memory `name`/
+# `type`, so it synthesises but its explicit date must win for recency.
+_JOURNAL = """---
+date: 2026-05-10
+project: dev
+headline: "A day in dev"
+---
+
+# 2026-05-10 — dev
+
+Some substantive turns.
+"""
+
+
+def test_date_from_frontmatter():
+    assert _date_from_frontmatter(_JOURNAL) == datetime(2026, 5, 10, tzinfo=timezone.utc)
+    assert _date_from_frontmatter("---\nupdated: 2026-04-04\n---\nbody") == datetime(2026, 4, 4, tzinfo=timezone.utc)
+    assert _date_from_frontmatter("no frontmatter here") is None
+    assert _date_from_frontmatter("---\nproject: x\n---\nbody") is None  # no date key
+    assert _date_from_frontmatter("---\nunclosed fence\nbody") is None
+    assert _date_from_frontmatter("---\ndate: 2026-13-40\n---\n") is None  # invalid -> None
+    # A date in the BODY (not frontmatter) must not be picked up.
+    assert _date_from_frontmatter("---\nproject: x\n---\ndate: 2026-01-01") is None
+
+
+def test_build_candidate_frontmatter_date_beats_clone_commit_date():
+    # Shallow clone gives every file the same (today-ish) commit date; the
+    # explicit frontmatter date must win so journal recency stays honest.
+    clone_date = datetime(2026, 6, 23, tzinfo=timezone.utc)
+    cand = _build_candidate("journal/2026-05-10--dev.md", _JOURNAL, clone_date)
+    assert cand.updated_at == datetime(2026, 5, 10, tzinfo=timezone.utc)
+    assert cand.type == "reference"  # synthesised (no memory frontmatter)
+
+
 def test_build_candidate_uses_frontmatter():
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     cand = _build_candidate("prefer-wif.md", _FRONTMATTER, when)
     assert cand.name == "prefer-wif"
     assert cand.type == "feedback"
+    # _FRONTMATTER has no date: field, so the git/mtime date is used.
     assert cand.updated_at == when
 
 
