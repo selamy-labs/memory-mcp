@@ -36,33 +36,51 @@ The service has **no external surface**: a `ClusterIP` Service plus a
 ### Agents (in-cluster) — cluster DNS
 
 The server listens on `memory-mcp.memory.svc:8080` over MCP streamable-http. An
-in-cluster MCP client points at:
+in-cluster MCP client (Claude Code) declares it as a remote HTTP MCP server:
 
+```json
+{
+  "mcpServers": {
+    "fleet-memory": {
+      "type": "http",
+      "url": "http://memory-mcp.memory.svc:8080/mcp"
+    }
+  }
+}
 ```
-http://memory-mcp.memory.svc:8080/mcp
-```
 
-The agent's namespace must be in the chart's `networkPolicy.allowedNamespaces`.
+Use a **distinct name** (`fleet-memory`) so it never collides with the local
+stdio `memory` server. The agent's namespace must be in the chart's
+`networkPolicy.allowedNamespaces`.
 
-### Orchestrator (off-cluster) — port-forward, never a public endpoint
+### Orchestrator (off-cluster) — tunnel, never a public endpoint
 
-The orchestrator runs outside the cluster, so it reaches the service through a
-`kubectl port-forward`, not a public URL:
+The orchestrator runs outside the cluster and reaches it only through a jump host
+that has `kubectl` credentials. Two hops are needed, and there is a port gotcha:
+the SSH `-L` forward binds its far-end port on the jump host, so `kubectl
+port-forward` must bind a *different* port there. The helper script encodes this:
 
 ```bash
-# 1. Get cluster credentials (run where gcloud is authed, e.g. ssh pselamy).
-gcloud container clusters get-credentials selamy-agents-prod \
-  --zone us-central1-a --project patrick-agents-prod
-
-# 2. Forward the service to localhost.
-kubectl -n memory port-forward svc/memory-mcp 8080:8080
-
-# 3. Point the MCP client at the forwarded port.
-#    http://127.0.0.1:8080/mcp
+# Opens dev:18080 -> jump:18081 -> memory-mcp.memory.svc:8080 (foreground; Ctrl-C to stop).
+JUMP_HOST=pselamy LOCAL_PORT=18080 scripts/orchestrator-connect.sh
 ```
 
-A scoped, longer-lived path (e.g. an authenticated reverse proxy) can replace the
-port-forward later; Phase-1 deliberately keeps the surface minimal.
+Then point the orchestrator's MCP client (e.g. `~/.claude.json`) at the local end:
+
+```json
+{
+  "mcpServers": {
+    "fleet-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:18080/mcp"
+    }
+  }
+}
+```
+
+A scoped, longer-lived path (an authenticated reverse proxy) can replace the
+tunnel later; Phase-1 deliberately keeps the surface minimal. The script reads no
+secrets — it only forwards a port.
 
 ## Configuration (environment, resolved at start)
 
