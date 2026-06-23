@@ -1,0 +1,53 @@
+{{- if .Values.reindex.enabled }}
+# Rebuilds the index from the markdown-in-git source of truth. Idempotent: the
+# indexer upserts on (group_id, name), so a full re-walk converges. Runs the same
+# image with `python -m memory_mcp` and the same pgvector backend env, so a fresh
+# database (PVC loss) is brought back to current by the next run.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}-reindex
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reindex
+spec:
+  schedule: {{ .Values.reindex.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "memory-mcp.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: reindex
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+          containers:
+            - name: reindex
+              image: {{ include "memory-mcp.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["python", "-m", "memory_mcp"]
+              env:
+                - name: MEMORY_BACKEND
+                  value: "pgvector"
+                - name: MEMORY_EMBEDDER
+                  value: {{ .Values.server.embedder | quote }}
+                - name: MEMORY_SOURCES
+                  value: {{ .Values.reindex.sources | quote }}
+                - name: PG_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "memory-mcp.fullname" . }}-pg
+                      key: password
+                - name: MEMORY_PG_DSN
+                  value: "postgresql://{{ .Values.postgres.user }}:$(PG_PASSWORD)@{{ include "memory-mcp.pgHost" . }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
+{{- end }}

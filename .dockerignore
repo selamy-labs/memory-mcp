@@ -1,0 +1,14 @@
+.git/
+.github/
+.venv/
+.claude/
+tests/
+templates/
+Chart.yaml
+values.yaml
+.helmignore
+*.py[cod]
+__pycache__/
+.coverage
+.pytest_cache/
+.ruff_cache/

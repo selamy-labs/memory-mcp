@@ -53,7 +53,10 @@ test = [
 ]
 
 [project.scripts]
+# Local stdio markdown read/write server (uvx against a local MEMORY_ROOT).
 memory-mcp = "memory_mcp.mcp_server:main"
+# Networked shared semantic memory server (pgvector backend; in-cluster service).
+memory-mcp-server = "memory_mcp.server_semantic:main"
 
 [project.urls]
 Homepage = "https://github.com/selamy-labs/memory-mcp"

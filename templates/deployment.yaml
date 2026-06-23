@@ -1,0 +1,90 @@
+# The shared semantic memory MCP server. Speaks MCP over streamable-http on a
+# ClusterIP Service; reads/writes the pgvector store. The Postgres DSN is built
+# from non-secret config plus the password mounted from the synced Secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.server.replicas }}
+  selector:
+    matchLabels:
+      {{- include "memory-mcp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "memory-mcp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: server
+          image: {{ include "memory-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.port }}
+          env:
+            - name: MCP_TRANSPORT
+              value: {{ .Values.server.transport | quote }}
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: {{ .Values.server.port | quote }}
+            - name: MEMORY_BACKEND
+              value: "pgvector"
+            - name: MEMORY_EMBEDDER
+              value: {{ .Values.server.embedder | quote }}
+            - name: MEMORY_ENSURE_SCHEMA
+              value: {{ ternary "1" "0" .Values.server.ensureSchema | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "memory-mcp.fullname" . }}-pg
+                  key: password
+            - name: MEMORY_PG_DSN
+              value: "postgresql://{{ .Values.postgres.user }}:$(PG_PASSWORD)@{{ include "memory-mcp.pgHost" . }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
+            {{- if .Values.externalSecret.embeddingKey.enabled }}
+            - name: MEMORY_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "memory-mcp.fullname" . }}-embedding
+                  key: api-key
+            {{- end }}
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "memory-mcp.fullname" . }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_TRACES_EXPORTER
+              value: "otlp"
+            {{- end }}
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "memory-mcp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: {{ .Values.server.port }}
+      targetPort: http

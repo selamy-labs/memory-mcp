@@ -1,0 +1,11 @@
+apiVersion: v2
+name: memory-mcp
+description: |
+  Shared fleet semantic memory: a networked MCP server (add_memory /
+  search_memory / get_memory) over a Postgres + pgvector index, with a reindex
+  CronJob that rebuilds the index from the markdown-in-git source of truth. No
+  external surface (ClusterIP + NetworkPolicy); the orchestrator connects via
+  port-forward. Phase-1 of the shared-fleet-memory design of record.
+type: application
+version: 0.1.0
+appVersion: "0.2.0"

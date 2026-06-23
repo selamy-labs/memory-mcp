@@ -1,0 +1,19 @@
+# Chart packaging excludes — keep only Chart.yaml, values.yaml, templates/.
+.git/
+.github/
+.venv/
+.claude/
+src/
+tests/
+pyproject.toml
+README.md
+LICENSE
+Dockerfile
+.editorconfig
+.gitignore
+.dockerignore
+*.py[cod]
+__pycache__/
+.coverage
+.pytest_cache/
+.ruff_cache/
