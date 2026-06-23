@@ -34,8 +34,19 @@ server:
   replicas: 1
   port: 8080
   transport: streamable-http
-  embedder: hashing            # zero-cost, no API key, fully self-hosted (Phase-1 default)
+  # Embedder: `hashing` (default; $0, no API key, fully self-hosted) or `openai`
+  # (any OpenAI-compatible /embeddings endpoint — see `embedding` below).
+  embedder: hashing
   ensureSchema: true           # create the pgvector schema on start (idempotent)
+  # OpenAI-compatible embedder config, used only when embedder=openai. Point
+  # base_url at a SELF-HOSTED in-cluster model (e.g. HuggingFace TEI) for a $0
+  # true-semantic upgrade, or at a paid provider (FLAG THE COST first). Switching
+  # embedder/dim changes the vector dimension and REQUIRES a reindex — recreate
+  # the table (drop + ensureSchema) then run the reindex CronJob.
+  embedding:
+    baseUrl: ""                # e.g. http://text-embeddings.memory.svc:80/v1
+    model: "text-embedding-3-small"
+    dim: 1536                  # must match the model's output dimension
   resources:
     requests:
       cpu: 50m

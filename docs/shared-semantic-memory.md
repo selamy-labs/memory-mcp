@@ -112,3 +112,42 @@ MEMORY_BACKEND=pgvector MEMORY_PG_DSN=... \
 Recency is seeded from each file's own date (git last-commit date → a date in the
 filename → file mtime), so importing the existing corpus does not make old
 memories look brand-new.
+
+## Embedder: $0 default, with a true-semantic upgrade path
+
+The default embedder is `hashing` — **$0, no API key, fully self-hosted**. It
+makes the semantic plumbing real (shared vocabulary pulls vectors together) but
+is not a learned model, so recall is "good enough", not state-of-the-art.
+
+To upgrade to true semantic recall, set `server.embedder=openai` (the adapter
+speaks any OpenAI-compatible `/embeddings` API) and choose a backend:
+
+1. **Self-hosted local model — RECOMMENDED, $0.** Run an in-cluster embedding
+   server that exposes an OpenAI-compatible endpoint (e.g. HuggingFace
+   [Text Embeddings Inference](https://github.com/huggingface/text-embeddings-inference)
+   serving a small model like `BAAI/bge-small-en-v1.5`, 384-dim) and point the
+   server at it — no API key, no per-call cost, no data leaving the cluster:
+
+   ```yaml
+   server:
+     embedder: openai
+     embedding:
+       baseUrl: "http://text-embeddings.memory.svc:80/v1"
+       model: "BAAI/bge-small-en-v1.5"
+       dim: 384
+   ```
+
+   A no-auth local endpoint needs no key (the adapter omits the `Authorization`
+   header when none is set).
+
+2. **Paid hosted provider (e.g. OpenAI `text-embedding-3-small`) — COSTS MONEY.**
+   This incurs per-token embedding charges and sends memory text to a third
+   party. **Do not enable without an explicit cost decision from the owner.**
+   When chosen, the key is provided via `externalSecret.embeddingKey` (GSM), never
+   image-baked.
+
+> **Switching the embedder requires a reindex.** The embedding dimension is fixed
+> per pgvector column, and different models produce different-dimension,
+> non-comparable vectors. To switch: update `embedder`/`embedding.dim`, drop +
+> recreate the table (`MEMORY_ENSURE_SCHEMA=1` creates it; an existing table must
+> be dropped first), then run the reindex CronJob to repopulate from git.
