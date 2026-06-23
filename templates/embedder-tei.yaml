@@ -1,0 +1,103 @@
+{{- if .Values.embedder.enabled }}
+# Self-hosted, in-cluster embedding model (HuggingFace Text Embeddings Inference).
+# Provides a $0 OpenAI-compatible /v1/embeddings endpoint with NO third-party API
+# and NO data egress at inference time. Embeddings are computed locally; memory
+# text never leaves the cluster. (TEI fetches the public model WEIGHTS from the HF
+# Hub ONCE on first boot, then serves fully offline from the PVC cache — that is a
+# model download, not memory data, and only happens until the cache is warm.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}-embedder
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "memory-mcp.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: embedder
+  strategy:
+    type: Recreate    # single PVC for the weight cache; avoid two pods racing it
+  template:
+    metadata:
+      labels:
+        {{- include "memory-mcp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: embedder
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: tei
+          image: {{ .Values.embedder.image }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--model-id"
+            - {{ .Values.embedder.model | quote }}
+            - "--port"
+            - "80"
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            # Cache model weights on the PVC so restarts don't re-download.
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /data
+          volumeMounts:
+            - name: cache
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            # Generous failure budget: first boot downloads the model weights.
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.embedder.resources | nindent 12 }}
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: {{ include "memory-mcp.fullname" . }}-embedder-cache
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}-embedder-cache
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedder
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.embedder.cacheStorageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.embedder.cacheStorage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}-embedder
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: embedder
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "memory-mcp.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: embedder
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

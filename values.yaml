@@ -55,6 +55,25 @@ server:
       cpu: "1"
       memory: 512Mi
 
+# Self-hosted in-cluster embedding model (HuggingFace TEI). $0, no third-party
+# API, no data egress at inference. Disabled by default (hashing stays the safe
+# fallback). To switch to true-semantic recall: enable this, set
+# server.embedder=openai + server.embedding.baseUrl to this Service + dim=384,
+# then drop+recreate the table and reindex (the dim changes from hashing's 512).
+embedder:
+  enabled: false
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9   # amd64; pinned
+  model: BAAI/bge-small-en-v1.5     # 384-dim, retrieval-tuned, CPU-friendly
+  cacheStorage: 2Gi                 # PVC caches the model weights (warm restarts)
+  cacheStorageClassName: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+
 postgres:
   image: pgvector/pgvector:pg16
   database: memory
