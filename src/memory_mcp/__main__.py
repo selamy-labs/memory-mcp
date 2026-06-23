@@ -79,10 +79,16 @@ def build_components(
 ) -> SemanticMemory:
     """Construct the SemanticMemory the indexer writes into.
 
-    Defaults to the offline hashing embedder + in-memory store so the CLI runs
-    anywhere; the deployment passes a real embedder/pgvector store for a durable
-    rebuild. Separated so tests inject doubles.
+    When ``MEMORY_BACKEND`` is set (the deployment / reindex CronJob), the same
+    env-driven builders the server uses select a durable embedder + pgvector
+    store, so a rebuild actually writes to Postgres. With no backend configured,
+    it defaults to the offline hashing embedder + in-memory store so the CLI runs
+    anywhere. Explicit ``embedder``/``store`` arguments (tests) win over both.
     """
+    if embedder is None and store is None and os.environ.get("MEMORY_BACKEND"):
+        from memory_mcp.server_semantic import build_memory
+
+        return build_memory()
     return SemanticMemory(embedder or HashingEmbedder(), store or InMemoryVectorStore())
 
 

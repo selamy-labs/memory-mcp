@@ -320,3 +320,35 @@ def build_pg_store(dsn: str, *, dim: int, table: str = DEFAULT_TABLE) -> PgVecto
         return psycopg.connect(dsn)
 
     return PgVectorStore(connect, dim=dim, table=table)
+
+
+def build_pg_store_from_params(
+    *,
+    host: str,
+    user: str,
+    password: str,
+    dbname: str,
+    port: int = 5432,
+    dim: int,
+    table: str = DEFAULT_TABLE,
+) -> PgVectorStore:
+    """Build a :class:`PgVectorStore` from discrete connection parameters.
+
+    Prefer this over :func:`build_pg_store` when the password may contain
+    characters that are unsafe in a URL DSN (``/``, ``+``, ``=`` from a base64
+    secret, ``@``, ``:`` ...). psycopg's keyword connection takes each field
+    verbatim, so no URL-encoding is needed and a special-char password can never
+    be misparsed into the wrong host/port. Credentials are passed at call time
+    from the environment / a mounted secret -- never baked into the image.
+    """
+    try:
+        import psycopg
+    except ModuleNotFoundError as error:  # pragma: no cover - import guard
+        raise SystemExit(
+            "PgVectorStore requires the 'psycopg' package. Install it with: pip install 'memory-mcp[pg]'"
+        ) from error
+
+    def connect() -> Any:
+        return psycopg.connect(host=host, port=port, user=user, password=password, dbname=dbname)
+
+    return PgVectorStore(connect, dim=dim, table=table)

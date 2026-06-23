@@ -47,13 +47,21 @@ spec:
               value: {{ .Values.server.embedder | quote }}
             - name: MEMORY_ENSURE_SCHEMA
               value: {{ ternary "1" "0" .Values.server.ensureSchema | quote }}
-            - name: PG_PASSWORD
+            # Discrete connection params (not a URL DSN): a base64/special-char
+            # password passed verbatim can never be misparsed into the wrong host.
+            - name: MEMORY_PG_HOST
+              value: {{ include "memory-mcp.pgHost" . | quote }}
+            - name: MEMORY_PG_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: MEMORY_PG_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: MEMORY_PG_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: MEMORY_PG_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "memory-mcp.fullname" . }}-pg
                   key: password
-            - name: MEMORY_PG_DSN
-              value: "postgresql://{{ .Values.postgres.user }}:$(PG_PASSWORD)@{{ include "memory-mcp.pgHost" . }}:{{ .Values.postgres.port }}/{{ .Values.postgres.database }}"
             {{- if .Values.externalSecret.embeddingKey.enabled }}
             - name: MEMORY_EMBEDDING_API_KEY
               valueFrom:

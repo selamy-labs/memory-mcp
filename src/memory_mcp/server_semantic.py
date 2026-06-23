@@ -94,16 +94,37 @@ def _build_store(dim: int) -> VectorStore:
     if choice == "memory":
         return InMemoryVectorStore()
     if choice == "pgvector":
-        from memory_mcp.pgvector_store import build_pg_store
-
-        dsn = os.environ.get("MEMORY_PG_DSN", "")
-        if not dsn:
-            raise SystemExit("MEMORY_BACKEND=pgvector requires MEMORY_PG_DSN")
-        store = build_pg_store(dsn, dim=dim)
+        store = _build_pg_store(dim)
         if _bool_env("MEMORY_ENSURE_SCHEMA"):
             store.ensure_schema()
         return store
     raise SystemExit(f"unknown MEMORY_BACKEND {choice!r}: expected 'pgvector' or 'memory'")
+
+
+def _build_pg_store(dim: int):
+    """Build the pgvector store, preferring discrete params over a URL DSN.
+
+    Discrete ``MEMORY_PG_HOST/PORT/USER/PASSWORD/DB`` are preferred because a
+    password with URL-unsafe characters (``/`` ``+`` ``=`` from a base64 secret)
+    silently breaks a ``postgresql://...`` DSN -- it gets misparsed into the wrong
+    host. Falling back to ``MEMORY_PG_DSN`` keeps older config working.
+    """
+    from memory_mcp.pgvector_store import build_pg_store, build_pg_store_from_params
+
+    host = os.environ.get("MEMORY_PG_HOST", "")
+    if host:
+        return build_pg_store_from_params(
+            host=host,
+            port=int(os.environ.get("MEMORY_PG_PORT", "5432")),
+            user=os.environ.get("MEMORY_PG_USER", "memory"),
+            password=os.environ.get("MEMORY_PG_PASSWORD", ""),
+            dbname=os.environ.get("MEMORY_PG_DB", "memory"),
+            dim=dim,
+        )
+    dsn = os.environ.get("MEMORY_PG_DSN", "")
+    if not dsn:
+        raise SystemExit("MEMORY_BACKEND=pgvector requires MEMORY_PG_HOST (preferred) or MEMORY_PG_DSN")
+    return build_pg_store(dsn, dim=dim)
 
 
 def build_memory() -> SemanticMemory:

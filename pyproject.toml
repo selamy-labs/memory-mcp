@@ -85,8 +85,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C90", "RUF", "S"]
 max-complexity = 12
 
 [tool.ruff.lint.per-file-ignores]
-# S101: asserts are the point of tests. S108: tests use fixed /tmp-style fake paths.
-"tests/**" = ["S101", "S108"]
+# S101: asserts are the point of tests. S108: tests use fixed /tmp-style fake
+# paths. S105/S106: tests use literal fake passwords to prove DSN/param handling.
+"tests/**" = ["S101", "S108", "S105", "S106"]
 # S608: the only value ever interpolated into SQL here is the table name, which
 # is validated as a Python identifier in PgVectorStore.__init__ (isidentifier());
 # every user/runtime value is a bound %s parameter. So the f-strings are not an

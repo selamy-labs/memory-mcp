@@ -11,7 +11,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from memory_mcp.pgvector_store import PgVectorStore, _vector_literal, build_pg_store
+from memory_mcp.pgvector_store import (
+    PgVectorStore,
+    _vector_literal,
+    build_pg_store,
+    build_pg_store_from_params,
+)
 from memory_mcp.vector_store import MemoryRecord
 
 _NOW = datetime(2026, 6, 23, tzinfo=timezone.utc)
@@ -217,6 +222,56 @@ def test_build_pg_store_uses_injected_psycopg_connect(monkeypatch):
     # Exercise the connect() closure end-to-end via a real store call.
     assert store.count() == 3
     assert calls == ["postgresql://u:p@host/db"]
+
+
+def test_build_pg_store_from_params_passes_special_char_password(monkeypatch):
+    import sys
+    import types
+
+    captured = {}
+    fake = types.ModuleType("psycopg")
+
+    def fake_connect(**kwargs):
+        captured.update(kwargs)
+        conn = FakeConnection()
+        conn.next_one = (1,)
+        return conn
+
+    fake.connect = fake_connect
+    monkeypatch.setitem(sys.modules, "psycopg", fake)
+
+    # A base64-style password with URL-unsafe chars must pass through verbatim.
+    store = build_pg_store_from_params(
+        host="memory-mcp-postgres.memory.svc",
+        user="memory",
+        password="aB/cd+ef=gh",
+        dbname="memory",
+        port=5432,
+        dim=4,
+    )
+    assert store.count() == 1
+    assert captured == {
+        "host": "memory-mcp-postgres.memory.svc",
+        "port": 5432,
+        "user": "memory",
+        "password": "aB/cd+ef=gh",  # verbatim — never URL-encoded/misparsed
+        "dbname": "memory",
+    }
+
+
+def test_build_pg_store_from_params_without_psycopg_raises(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "psycopg":
+            raise ModuleNotFoundError("no psycopg")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(SystemExit, match="requires the 'psycopg' package"):
+        build_pg_store_from_params(host="h", user="u", password="p", dbname="d", dim=4)
 
 
 def test_build_pg_store_without_psycopg_raises_systemexit(monkeypatch):
