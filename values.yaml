@@ -22,6 +22,14 @@ image:
 imagePullSecrets:
   - name: ghcr-pull
 
+# Sync the shared fleet GHCR pull secret into this namespace (so the private
+# image can be pulled), mirroring the agent charts. Disable if the image package
+# is public or the secret is provided another way.
+ghcrPull:
+  enabled: true
+  secretName: ghcr-pull
+  gsmSecret: agent-ghcr-pull-dockerconfigjson
+
 server:
   replicas: 1
   port: 8080
