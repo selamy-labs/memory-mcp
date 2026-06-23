@@ -89,14 +89,26 @@ networkPolicy:
     - virtual-louie
 
 # Reindex CronJob: rebuilds the index from the markdown-in-git source of truth.
-# Phase-1 default is disabled because the markdown sources (orchestrator memory +
-# per-agent /opt/data/memories) are not yet mounted/cloned into this namespace;
-# enable once a source mount or git-clone init is wired (PR5 / follow-up).
+# An init container shallow-clones each `gitSources` repo into a shared volume,
+# then the indexer walks them. markdown-in-git stays the source of truth; the
+# index is a rebuildable cache. Enable + set gitSources in the deploying overlay.
 reindex:
   enabled: false
   schedule: "0 */6 * * *"
-  # Comma-separated path[:group_id] entries the CronJob indexes.
+  # Git sources to clone + index. Each: { name, repo (owner/name), ref?, group_id?, subpath? }.
+  # Recency is seeded from each file's git commit date (the clone is a real repo).
+  # Example (set in the infra Application's Helm parameters):
+  #   gitSources:
+  #     - { name: session-journal, repo: selamy-labs/session-journal, group_id: fleet }
+  gitSources: []
+  # Fallback raw path:group_id spec when not using gitSources (e.g. a hostPath mount).
   sources: ""
+  # Token for cloning PRIVATE source repos, synced from GSM via ExternalSecrets.
+  # Public sources need no token. The job only reads (never pushes).
+  cloneTokenSecret:
+    enabled: false
+    name: memory-mcp-clone-token
+    key: token
 
 otel:
   enabled: false

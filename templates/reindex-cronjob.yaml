@@ -1,8 +1,10 @@
 {{- if .Values.reindex.enabled }}
 # Rebuilds the index from the markdown-in-git source of truth. Idempotent: the
-# indexer upserts on (group_id, name), so a full re-walk converges. Runs the same
-# image with `python -m memory_mcp` and the same pgvector backend env, so a fresh
-# database (PVC loss) is brought back to current by the next run.
+# indexer upserts on (group_id, name), so a full re-walk converges. An init
+# container shallow-clones each configured git source into a shared emptyDir; the
+# reindex container then walks them with `python -m memory_mcp`, writing to the
+# same pgvector backend. A fresh database (PVC loss) is brought back to current
+# by the next run — git stays the source of truth.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -31,18 +33,61 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001
+          volumes:
+            - name: sources
+              emptyDir: {}
+          {{- if .Values.reindex.gitSources }}
+          initContainers:
+            # Shallow-clone each git source into /sources/<name>. The clone token
+            # is mounted from a Secret (ExternalSecrets <- GSM); private repos need
+            # it, public repos ignore it. Read-only: the job never pushes.
+            - name: clone-sources
+              image: {{ include "memory-mcp.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["bash", "-ceu"]
+              args:
+                - |
+                  {{- range .Values.reindex.gitSources }}
+                  echo "cloning {{ .repo }}@{{ .ref | default "main" }} -> /sources/{{ .name }}"
+                  url="https://github.com/{{ .repo }}.git"
+                  if [ -n "${GIT_CLONE_TOKEN:-}" ]; then
+                    url="https://x-access-token:${GIT_CLONE_TOKEN}@github.com/{{ .repo }}.git"
+                  fi
+                  git clone --depth 1 --branch "{{ .ref | default "main" }}" "$url" "/sources/{{ .name }}"
+                  {{- end }}
+                  echo "clone complete"
+              env:
+                {{- if .Values.reindex.cloneTokenSecret.enabled }}
+                - name: GIT_CLONE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.reindex.cloneTokenSecret.name }}
+                      key: {{ .Values.reindex.cloneTokenSecret.key }}
+                {{- end }}
+              volumeMounts:
+                - name: sources
+                  mountPath: /sources
+          {{- end }}
           containers:
             - name: reindex
               image: {{ include "memory-mcp.image" . }}
               imagePullPolicy: {{ .Values.image.pullPolicy }}
               command: ["python", "-m", "memory_mcp"]
+              volumeMounts:
+                - name: sources
+                  mountPath: /sources
               env:
                 - name: MEMORY_BACKEND
                   value: "pgvector"
                 - name: MEMORY_EMBEDDER
                   value: {{ .Values.server.embedder | quote }}
                 - name: MEMORY_SOURCES
+                  {{- if .Values.reindex.gitSources }}
+                  # path:group_id per cloned source (optional subpath under the clone).
+                  value: "{{- range $i, $s := .Values.reindex.gitSources }}{{ if $i }},{{ end }}/sources/{{ $s.name }}{{ with $s.subpath }}/{{ . }}{{ end }}:{{ $s.group_id | default "fleet" }}{{- end }}"
+                  {{- else }}
                   value: {{ .Values.reindex.sources | quote }}
+                  {{- end }}
                 - name: MEMORY_PG_HOST
                   value: {{ include "memory-mcp.pgHost" . | quote }}
                 - name: MEMORY_PG_PORT
