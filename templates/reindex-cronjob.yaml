@@ -81,6 +81,26 @@ spec:
                   value: "pgvector"
                 - name: MEMORY_EMBEDDER
                   value: {{ .Values.server.embedder | quote }}
+                {{- if eq .Values.server.embedder "openai" }}
+                # Must match the server's embedder so re-indexed vectors are
+                # comparable. Without these the openai adapter defaults to
+                # api.openai.com (401), not the in-cluster model.
+                {{- with .Values.server.embedding.baseUrl }}
+                - name: MEMORY_EMBEDDING_BASE_URL
+                  value: {{ . | quote }}
+                {{- end }}
+                - name: MEMORY_EMBEDDING_MODEL
+                  value: {{ .Values.server.embedding.model | quote }}
+                - name: MEMORY_EMBEDDING_DIM
+                  value: {{ .Values.server.embedding.dim | quote }}
+                {{- if .Values.externalSecret.embeddingKey.enabled }}
+                - name: MEMORY_EMBEDDING_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "memory-mcp.fullname" . }}-embedding
+                      key: api-key
+                {{- end }}
+                {{- end }}
                 - name: MEMORY_SOURCES
                   {{- if .Values.reindex.gitSources }}
                   # path:group_id per cloned source (optional subpath under the clone).
