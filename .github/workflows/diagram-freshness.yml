@@ -1,0 +1,31 @@
+name: Diagram Freshness
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  diagram-freshness:
+    uses: selamy-labs/.github/.github/workflows/diagram-freshness.yml@main
+    with:
+      source-globs: |
+        src/**
+        templates/**
+        scripts/**
+        .github/workflows/**
+        Dockerfile
+        Chart.yaml
+        values.yaml
+        pyproject.toml
+        README.md
+        docs/shared-semantic-memory.md
+        **/*.spec.md
+      enforce: false

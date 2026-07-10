@@ -137,6 +137,9 @@ collector; the collector (not this server) owns any Cloud Trace / vendor couplin
 
 ## Architecture
 
+See the version-controlled [system context diagram](docs/architecture/system-context.md)
+for the local and shared-service boundaries and their external dependencies.
+
 The store logic lives once in `memory_mcp.core.MemoryStore`; the MCP server in
 `memory_mcp.mcp_server` is a thin wrapper that serialises structured results to
 JSON and maps expected failures to `ToolError`. All file access goes through an
