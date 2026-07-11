@@ -19,7 +19,8 @@ def offline_memory():
     srv.set_memory(None)
 
 
-def test_add_search_get_round_trip(offline_memory):
+@pytest.mark.usefixtures("offline_memory")
+def test_add_search_get_round_trip():
     out = srv.add_memory("a-mem", "a shared fleet fact", "feedback", "body here", updated_at="2026-01-01T00:00:00Z")
     assert out["indexed"] is True
     assert out["group_id"] == FLEET_SCOPE
@@ -32,19 +33,22 @@ def test_add_search_get_round_trip(offline_memory):
     assert got["body"] == "body here"
 
 
-def test_add_to_domain_scope(offline_memory):
+@pytest.mark.usefixtures("offline_memory")
+def test_add_to_domain_scope():
     srv.add_memory("t", "kalshi edge", "project", "details", group_id="trading")
     assert srv.get_memory("t", group_id="trading")["name"] == "t"
 
 
-def test_search_can_exclude_fleet(offline_memory):
+@pytest.mark.usefixtures("offline_memory")
+def test_search_can_exclude_fleet():
     srv.add_memory("f", "alpha topic", "reference", "x")
     srv.add_memory("i", "alpha topic", "reference", "x", group_id="infra")
     out = srv.search_memory("alpha topic", group_ids=["infra"], include_fleet=False)
     assert {h["name"] for h in out["hits"]} == {"i"}
 
 
-def test_tool_errors_map_to_toolerror(offline_memory):
+@pytest.mark.usefixtures("offline_memory")
+def test_tool_errors_map_to_toolerror():
     with pytest.raises(ToolError):
         srv.add_memory("", "d", "t", "b")
     with pytest.raises(ToolError):

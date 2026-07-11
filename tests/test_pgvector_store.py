@@ -29,7 +29,7 @@ class FakeCursor:
     def __enter__(self) -> FakeCursor:
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *_exc) -> None:
         return None
 
     def execute(self, sql, params=None) -> None:
@@ -52,7 +52,7 @@ class FakeConnection:
     def __enter__(self) -> FakeConnection:
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *_exc) -> None:
         return None
 
     def cursor(self) -> FakeCursor:
