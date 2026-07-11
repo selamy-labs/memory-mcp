@@ -155,6 +155,7 @@ extra needed only to run the server.
 python -m pip install -e ".[test]"
 ruff format --check .
 ruff check .
+vulture src/ tests/ --min-confidence 80
 coverage run -m pytest
 coverage report --fail-under=95
 ```

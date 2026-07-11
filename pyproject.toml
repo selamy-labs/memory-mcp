@@ -50,6 +50,7 @@ test = [
   "mcp>=1.2",
   "pytest>=8.3",
   "ruff>=0.8",
+  "vulture>=2.14",
 ]
 
 [project.scripts]
