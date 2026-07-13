@@ -125,6 +125,11 @@ networkPolicy:
 reindex:
   enabled: false
   schedule: "0 */6 * * *"
+  # Run an Argo CD sync hook Job whenever the chart syncs. This is intentionally
+  # opt-in: source changes that add scopes need an immediate acceptance artifact,
+  # while steady-state clusters can rely on the CronJob schedule.
+  runOnSync:
+    enabled: false
   # Git sources to clone + index. Each: { name, repo (owner/name), ref?, group_id?, subpath? }.
   # Recency is seeded from each file's git commit date (the clone is a real repo).
   # Example (set in the infra Application's Helm parameters):
