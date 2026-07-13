@@ -1,0 +1,109 @@
+{{- if and .Values.reindex.enabled .Values.reindex.runOnSync.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "memory-mcp.fullname" . }}-reindex-sync
+  labels:
+    {{- include "memory-mcp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reindex
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        {{- include "memory-mcp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: reindex
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      volumes:
+        - name: sources
+          emptyDir: {}
+      {{- if .Values.reindex.gitSources }}
+      initContainers:
+        - name: clone-sources
+          image: {{ include "memory-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["bash", "-ceu"]
+          args:
+            - |
+              {{- range .Values.reindex.gitSources }}
+              echo "cloning {{ .repo }}@{{ .ref | default "main" }} -> /sources/{{ .name }}"
+              url="https://github.com/{{ .repo }}.git"
+              if [ -n "${GIT_CLONE_TOKEN:-}" ]; then
+                url="https://x-access-token:${GIT_CLONE_TOKEN}@github.com/{{ .repo }}.git"
+              fi
+              git clone --depth 1 --branch "{{ .ref | default "main" }}" "$url" "/sources/{{ .name }}"
+              {{- end }}
+              echo "clone complete"
+          env:
+            {{- if .Values.reindex.cloneTokenSecret.enabled }}
+            - name: GIT_CLONE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.reindex.cloneTokenSecret.name }}
+                  key: {{ .Values.reindex.cloneTokenSecret.key }}
+            {{- end }}
+          volumeMounts:
+            - name: sources
+              mountPath: /sources
+      {{- end }}
+      containers:
+        - name: reindex
+          image: {{ include "memory-mcp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "memory_mcp"]
+          volumeMounts:
+            - name: sources
+              mountPath: /sources
+          env:
+            - name: MEMORY_BACKEND
+              value: "pgvector"
+            - name: MEMORY_EMBEDDER
+              value: {{ .Values.server.embedder | quote }}
+            {{- if eq .Values.server.embedder "openai" }}
+            {{- with .Values.server.embedding.baseUrl }}
+            - name: MEMORY_EMBEDDING_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: MEMORY_EMBEDDING_MODEL
+              value: {{ .Values.server.embedding.model | quote }}
+            - name: MEMORY_EMBEDDING_DIM
+              value: {{ .Values.server.embedding.dim | quote }}
+            {{- if .Values.externalSecret.embeddingKey.enabled }}
+            - name: MEMORY_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "memory-mcp.fullname" . }}-embedding
+                  key: api-key
+            {{- end }}
+            {{- end }}
+            - name: MEMORY_SOURCES
+              {{- if .Values.reindex.gitSources }}
+              value: "{{- range $i, $s := .Values.reindex.gitSources }}{{ if $i }},{{ end }}/sources/{{ $s.name }}{{ with $s.subpath }}/{{ . }}{{ end }}:{{ $s.group_id | default "fleet" }}{{- end }}"
+              {{- else }}
+              value: {{ .Values.reindex.sources | quote }}
+              {{- end }}
+            - name: MEMORY_PG_HOST
+              value: {{ include "memory-mcp.pgHost" . | quote }}
+            - name: MEMORY_PG_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: MEMORY_PG_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: MEMORY_PG_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: MEMORY_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "memory-mcp.fullname" . }}-pg
+                  key: password
+{{- end }}
