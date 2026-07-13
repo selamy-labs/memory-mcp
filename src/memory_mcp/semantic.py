@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from memory_mcp.embeddings import Embedder
-from memory_mcp.vector_store import FLEET_SCOPE, MemoryRecord, VectorStore
+from memory_mcp.vector_store import FLEET_SCOPE, MemoryRecord, Provenance, VectorStore
 
 # A scope id is a short namespace label: the shared "fleet" plus per-domain
 # scopes like "trading" / "infra" / "matchpoint" / "career". Keep it a simple
@@ -88,6 +88,7 @@ class SemanticMemory:
         *,
         group_id: str = FLEET_SCOPE,
         updated_at: datetime | str | None = None,
+        provenance: dict[str, Any] | Provenance | None = None,
     ) -> dict[str, Any]:
         """Index one memory into ``group_id``; idempotent on ``(group_id, name)``.
 
@@ -106,6 +107,7 @@ class SemanticMemory:
         if not clean_type:
             raise SemanticMemoryError("type must not be empty")
         when = _coerce_updated_at(updated_at)
+        provenance_obj = provenance if isinstance(provenance, Provenance) else Provenance.from_mapping(provenance)
 
         embedding = self._embedder.embed(f"{clean_name}\n{clean_description}\n{body}")
         record = MemoryRecord(
@@ -116,6 +118,7 @@ class SemanticMemory:
             body=body,
             embedding=embedding,
             updated_at=when,
+            provenance=provenance_obj,
         )
         self._store.upsert(record)
         return {
@@ -123,6 +126,7 @@ class SemanticMemory:
             "name": clean_name,
             "type": clean_type,
             "updated_at": when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "provenance": provenance_obj.to_view(),
             "indexed": True,
         }
 

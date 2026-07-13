@@ -12,6 +12,11 @@ description: "Prefer passwordless/tokenless auth — WIF over service-account ke
 metadata:
   node_type: memory
   type: feedback
+  source_repo: selamy-labs/memory-mcp
+  source_commit: abc123
+  evidence: user-authored
+  privacy: internal
+  retention: standard
   originSessionId: 1ff00fae-a1c3-4134-a508-9a8ac5c9fda1
 ---
 
@@ -29,6 +34,11 @@ def test_parse_real_store_shape() -> None:
     # Unknown metadata keys are preserved, 'type' is lifted out.
     assert memory.extra_metadata == {
         "node_type": "memory",
+        "source_repo": "selamy-labs/memory-mcp",
+        "source_commit": "abc123",
+        "evidence": "user-authored",
+        "privacy": "internal",
+        "retention": "standard",
         "originSessionId": "1ff00fae-a1c3-4134-a508-9a8ac5c9fda1",
     }
     assert "passwordless" in memory.body
@@ -137,4 +147,8 @@ def test_to_view_shape() -> None:
     assert view["type"] == "feedback"
     assert view["path"] == "feedback-prefer-wif.md"
     assert view["metadata"]["node_type"] == "memory"
+    assert view["provenance"]["source_repo"] == "selamy-labs/memory-mcp"
+    assert view["provenance"]["source_path"] == "feedback-prefer-wif.md"
+    assert view["provenance"]["session_id"] == "1ff00fae-a1c3-4134-a508-9a8ac5c9fda1"
+    assert view["provenance"]["missing"] == []
     assert "body" in view

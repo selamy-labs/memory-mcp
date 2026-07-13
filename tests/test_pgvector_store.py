@@ -17,7 +17,7 @@ from memory_mcp.pgvector_store import (
     build_pg_store,
     build_pg_store_from_params,
 )
-from memory_mcp.vector_store import MemoryRecord
+from memory_mcp.vector_store import MemoryRecord, Provenance
 
 _NOW = datetime(2026, 6, 23, tzinfo=timezone.utc)
 
@@ -75,6 +75,14 @@ def _record(*, group_id="fleet", name="a", dim=4) -> MemoryRecord:
         body="body text here",
         embedding=[0.5] * dim,
         updated_at=_NOW,
+        provenance=Provenance(
+            source_repo="selamy-labs/memory-mcp",
+            source_path="a.md",
+            source_commit="abc123",
+            evidence="frontmatter",
+            privacy="internal",
+            retention="standard",
+        ),
     )
 
 
@@ -96,6 +104,8 @@ def test_ensure_schema_runs_extension_table_indexes_and_commits():
     assert "CREATE EXTENSION IF NOT EXISTS vector" in sql_blob
     assert "CREATE TABLE IF NOT EXISTS memories" in sql_blob
     assert "vector(4)" in sql_blob
+    assert "provenance  jsonb" in sql_blob
+    assert "ADD COLUMN IF NOT EXISTS provenance jsonb" in sql_blob
     assert "USING hnsw (embedding vector_cosine_ops)" in sql_blob
     assert conn.commits == 1
 
@@ -108,6 +118,7 @@ def test_upsert_uses_on_conflict_and_passes_vector_and_tokens():
     # tokens param (index 5) is the space-joined token string; embedding (6) is the literal.
     assert params[5] == "a desc body text here"
     assert params[6] == "[0.5,0.5,0.5,0.5]"
+    assert '"source_path": "a.md"' in params[8]
     assert conn.commits == 1
 
 
@@ -125,21 +136,40 @@ def test_get_returns_none_when_missing():
 
 def test_get_coerces_row_to_record():
     conn = FakeConnection()
-    conn.next_one = ("fleet", "a", "feedback", "desc", "body", "[0.1,0.2,0.3,0.4]", _NOW)
+    conn.next_one = (
+        "fleet",
+        "a",
+        "feedback",
+        "desc",
+        "body",
+        "[0.1,0.2,0.3,0.4]",
+        _NOW,
+        {"source_path": "a.md", "evidence": "frontmatter"},
+    )
     rec = _store(conn).get("fleet", "a")
     assert rec.name == "a"
     assert rec.embedding == [0.1, 0.2, 0.3, 0.4]
     assert rec.updated_at == _NOW
+    assert rec.provenance.source_path == "a.md"
 
 
 def test_get_coerces_naive_datetime_and_iso_string_and_list_embedding():
     conn = FakeConnection()
-    conn.next_one = ("fleet", "a", "feedback", "desc", "body", [0.1, 0.2, 0.3, 0.4], datetime(2026, 1, 1))
+    conn.next_one = (
+        "fleet",
+        "a",
+        "feedback",
+        "desc",
+        "body",
+        [0.1, 0.2, 0.3, 0.4],
+        datetime(2026, 1, 1),
+        "{}",
+    )
     rec = _store(conn).get("fleet", "a")
     assert rec.updated_at.tzinfo == timezone.utc
     assert rec.embedding == [0.1, 0.2, 0.3, 0.4]
 
-    conn.next_one = ("fleet", "b", "feedback", "desc", "body", "[]", "2026-02-02T00:00:00Z")
+    conn.next_one = ("fleet", "b", "feedback", "desc", "body", "[]", "2026-02-02T00:00:00Z", "{}")
     rec2 = _store(conn).get("fleet", "b")
     assert rec2.embedding == []
     assert rec2.updated_at == datetime(2026, 2, 2, tzinfo=timezone.utc)
@@ -170,7 +200,20 @@ def test_search_empty_scopes_short_circuits():
 def test_search_builds_blended_sql_with_scopes_type_and_limit():
     conn = FakeConnection()
     conn.next_all = [
-        ("fleet", "a", "feedback", "desc", "body", "[0.5,0.5,0.5,0.5]", _NOW, 0.9, 0.8, 1.0, 1.5),
+        (
+            "fleet",
+            "a",
+            "feedback",
+            "desc",
+            "body",
+            "[0.5,0.5,0.5,0.5]",
+            _NOW,
+            {"source_path": "a.md"},
+            0.9,
+            0.8,
+            1.0,
+            1.5,
+        ),
     ]
     store = _store(conn)
     hits = store.search(["fleet", "infra"], [0.5] * 4, "body text", limit=5, type="feedback", now=_NOW)
@@ -184,12 +227,13 @@ def test_search_builds_blended_sql_with_scopes_type_and_limit():
     assert len(hits) == 1
     assert hits[0].score == pytest.approx(1.5)
     assert hits[0].semantic == pytest.approx(0.9)
+    assert hits[0].record.provenance.source_path == "a.md"
 
 
 def test_search_drops_nonpositive_scores():
     conn = FakeConnection()
     conn.next_all = [
-        ("fleet", "a", "feedback", "d", "b", "[0.5,0.5,0.5,0.5]", _NOW, 0.0, 0.0, 0.0, 0.0),
+        ("fleet", "a", "feedback", "d", "b", "[0.5,0.5,0.5,0.5]", _NOW, {}, 0.0, 0.0, 0.0, 0.0),
     ]
     assert _store(conn).search(["fleet"], [0.5] * 4, "no overlap", now=_NOW) == []
 

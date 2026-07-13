@@ -34,7 +34,7 @@ from typing import Protocol
 
 from memory_mcp.document import DocumentError, parse
 from memory_mcp.semantic import SemanticMemory
-from memory_mcp.vector_store import FLEET_SCOPE
+from memory_mcp.vector_store import FLEET_SCOPE, Provenance
 
 # The human-readable index file is not itself a memory; skip it on every walk.
 INDEX_FILENAME = "MEMORY.md"
@@ -72,6 +72,8 @@ class MemorySource:
 
     reader: SourceReader
     group_id: str = FLEET_SCOPE
+    source_repo: str | None = None
+    source_commit: str | None = None
 
 
 @dataclass
@@ -158,9 +160,17 @@ class _Candidate:
     type: str
     body: str
     updated_at: datetime
+    provenance: Provenance
 
 
-def _build_candidate(relpath: str, text: str, modified_at: datetime | None) -> _Candidate | None:
+def _build_candidate(
+    relpath: str,
+    text: str,
+    modified_at: datetime | None,
+    *,
+    source_repo: str | None = None,
+    source_commit: str | None = None,
+) -> _Candidate | None:
     """Turn a markdown file into an indexable candidate.
 
     A file with valid memory frontmatter uses its ``name``/``description``/
@@ -175,18 +185,26 @@ def _build_candidate(relpath: str, text: str, modified_at: datetime | None) -> _
     description: str
     mem_type: str
     body: str
+    provenance: Provenance
     try:
         memory = parse(text)
         name = memory.name
         description = memory.description
         mem_type = memory.type
         body = memory.body
+        provenance = Provenance.from_metadata(
+            memory.extra_metadata,
+            source_path=relpath,
+            source_repo=source_repo,
+            source_commit=source_commit,
+        )
     except DocumentError:
         stem = Path(relpath).stem
         name = _slugify(stem)
         description = _first_meaningful_line(text) or stem
         mem_type = _DEFAULT_TYPE
         body = text
+        provenance = Provenance(source_repo=source_repo, source_path=relpath, source_commit=source_commit)
 
     # Recency precedence, most authoritative first: an explicit frontmatter date
     # (the author set it) > a date in the filename > the file's git commit / mtime
@@ -195,7 +213,14 @@ def _build_candidate(relpath: str, text: str, modified_at: datetime | None) -> _
     updated_at = _date_from_frontmatter(text) or _date_from_name(relpath) or modified_at
     if updated_at is None:
         return None
-    return _Candidate(name=name, description=description, type=mem_type, body=body, updated_at=updated_at)
+    return _Candidate(
+        name=name,
+        description=description,
+        type=mem_type,
+        body=body,
+        updated_at=updated_at,
+        provenance=provenance,
+    )
 
 
 class MarkdownIndexer:
@@ -217,7 +242,13 @@ class MarkdownIndexer:
                 report.errors.append(f"{relpath}: read failed: {error}")
                 continue
 
-            candidate = _build_candidate(relpath, text, source.reader.modified_at(relpath))
+            candidate = _build_candidate(
+                relpath,
+                text,
+                source.reader.modified_at(relpath),
+                source_repo=source.source_repo,
+                source_commit=source.source_commit,
+            )
             if candidate is None:
                 report.skipped += 1
                 continue
@@ -229,6 +260,7 @@ class MarkdownIndexer:
                     candidate.body,
                     group_id=source.group_id,
                     updated_at=candidate.updated_at,
+                    provenance=candidate.provenance,
                 )
                 report.indexed += 1
             except Exception as error:  # record and continue; one bad file must not abort a rebuild

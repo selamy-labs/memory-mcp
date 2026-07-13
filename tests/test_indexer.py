@@ -25,6 +25,11 @@ description: Prefer WIF over service-account keys
 metadata:
   node_type: memory
   type: feedback
+  source_commit: doccommit
+  evidence: frontmatter
+  privacy: internal
+  retention: standard
+  originSessionId: session-1
 ---
 
 Use keyless OIDC for GCP auth.
@@ -102,11 +107,16 @@ def test_build_candidate_frontmatter_date_beats_clone_commit_date():
 
 def test_build_candidate_uses_frontmatter():
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    cand = _build_candidate("prefer-wif.md", _FRONTMATTER, when)
+    cand = _build_candidate("prefer-wif.md", _FRONTMATTER, when, source_repo="selamy-labs/memory-mcp")
     assert cand.name == "prefer-wif"
     assert cand.type == "feedback"
     # _FRONTMATTER has no date: field, so the git/mtime date is used.
     assert cand.updated_at == when
+    assert cand.provenance.source_repo == "selamy-labs/memory-mcp"
+    assert cand.provenance.source_path == "prefer-wif.md"
+    assert cand.provenance.source_commit == "doccommit"
+    assert cand.provenance.session_id == "session-1"
+    assert cand.provenance.missing() == []
 
 
 def test_build_candidate_synthesises_for_plain_markdown():
@@ -134,10 +144,16 @@ def test_index_source_indexes_and_seeds_recency():
             "loose.md": (_PLAIN, datetime(2026, 2, 2, tzinfo=timezone.utc)),
         }
     )
-    report = MarkdownIndexer(mem).index_source(MemorySource(reader=reader))
+    report = MarkdownIndexer(mem).index_source(
+        MemorySource(reader=reader, source_repo="selamy-labs/memory-mcp", source_commit="abc123")
+    )
     assert report.indexed == 2
     got = mem.get_memory("prefer-wif")
     assert got["updated_at"] == "2026-01-01T00:00:00Z"  # frontmatter file's authored date, not "now"
+    assert got["provenance"]["source_repo"] == "selamy-labs/memory-mcp"
+    assert got["provenance"]["source_path"] == "prefer-wif.md"
+    assert got["provenance"]["source_commit"] == "abc123"
+    assert got["provenance"]["missing"] == []
 
 
 def test_index_skips_memory_index_file_and_undated():

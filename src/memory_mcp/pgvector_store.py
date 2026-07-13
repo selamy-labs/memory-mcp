@@ -30,6 +30,7 @@ and the inserted vectors never drift.
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ from memory_mcp.embeddings import tokenize
 from memory_mcp.vector_store import (
     DEFAULT_RECENCY_HALFLIFE_DAYS,
     MemoryRecord,
+    Provenance,
     ScoredRecord,
 )
 
@@ -103,9 +105,11 @@ class PgVectorStore:
                 "  tokens      text        NOT NULL,"
                 f"  embedding   vector({self._dim}) NOT NULL,"
                 "  updated_at  timestamptz NOT NULL,"
+                "  provenance  jsonb       NOT NULL DEFAULT '{}'::jsonb,"
                 "  PRIMARY KEY (group_id, name)"
                 ")"
             ),
+            f"ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS provenance jsonb NOT NULL DEFAULT '{{}}'::jsonb",
             f"CREATE INDEX IF NOT EXISTS {self._table}_group_idx ON {self._table} (group_id)",
             (
                 f"CREATE INDEX IF NOT EXISTS {self._table}_embedding_idx "
@@ -127,11 +131,12 @@ class PgVectorStore:
         tokens = " ".join(tokenize(f"{record.name} {record.description} {record.body}"))
         sql = (
             f"INSERT INTO {self._table} "
-            "(group_id, name, type, description, body, tokens, embedding, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+            "(group_id, name, type, description, body, tokens, embedding, updated_at, provenance) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (group_id, name) DO UPDATE SET "
             "type = EXCLUDED.type, description = EXCLUDED.description, body = EXCLUDED.body, "
-            "tokens = EXCLUDED.tokens, embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at"
+            "tokens = EXCLUDED.tokens, embedding = EXCLUDED.embedding, updated_at = EXCLUDED.updated_at, "
+            "provenance = EXCLUDED.provenance"
         )
         params = (
             record.group_id,
@@ -142,6 +147,7 @@ class PgVectorStore:
             tokens,
             _vector_literal(record.embedding),
             record.updated_at.astimezone(timezone.utc),
+            json.dumps(record.provenance.to_view()),
         )
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -152,7 +158,7 @@ class PgVectorStore:
 
     def get(self, group_id: str, name: str) -> MemoryRecord | None:
         sql = (
-            f"SELECT group_id, name, type, description, body, embedding, updated_at "
+            f"SELECT group_id, name, type, description, body, embedding, updated_at, provenance "
             f"FROM {self._table} WHERE group_id = %s AND name = %s"
         )
         with self._connect() as conn, conn.cursor() as cur:
@@ -215,7 +221,7 @@ class PgVectorStore:
         )
 
         sql_parts = [
-            "SELECT group_id, name, type, description, body, embedding, updated_at,",
+            "SELECT group_id, name, type, description, body, embedding, updated_at, provenance,",
             f"  {semantic_expr} AS semantic,",
             f"  {recency_expr} AS recency,",
             f"  {keyword_expr} AS keyword,",
@@ -243,8 +249,8 @@ class PgVectorStore:
 
         hits: list[ScoredRecord] = []
         for row in rows:
-            record = self._row_to_record(row[:7])
-            semantic, recency, keyword, score = (float(row[7]), float(row[8]), float(row[9]), float(row[10]))
+            record = self._row_to_record(row[:8])
+            semantic, recency, keyword, score = (float(row[8]), float(row[9]), float(row[10]), float(row[11]))
             if score <= 0.0:
                 continue
             hits.append(ScoredRecord(record=record, score=score, semantic=semantic, recency=recency, keyword=keyword))
@@ -270,7 +276,7 @@ class PgVectorStore:
         return expr, params
 
     def _row_to_record(self, row: tuple[Any, ...]) -> MemoryRecord:
-        group_id, name, mem_type, description, body, embedding, updated_at = row
+        group_id, name, mem_type, description, body, embedding, updated_at, provenance = row
         return MemoryRecord(
             group_id=group_id,
             name=name,
@@ -279,6 +285,7 @@ class PgVectorStore:
             body=self._coerce_text(body),
             embedding=self._coerce_embedding(embedding),
             updated_at=self._coerce_dt(updated_at),
+            provenance=self._coerce_provenance(provenance),
         )
 
     @staticmethod
@@ -299,6 +306,16 @@ class PgVectorStore:
         from memory_mcp.vector_store import _parse_iso
 
         return _parse_iso(str(value))
+
+    @staticmethod
+    def _coerce_provenance(value: Any) -> Provenance:
+        if isinstance(value, Provenance):
+            return value
+        if isinstance(value, str):
+            return Provenance.from_mapping(json.loads(value) if value else {})
+        if isinstance(value, dict):
+            return Provenance.from_mapping(value)
+        return Provenance()
 
 
 def build_pg_store(dsn: str, *, dim: int, table: str = DEFAULT_TABLE) -> PgVectorStore:

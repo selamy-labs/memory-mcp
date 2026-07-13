@@ -33,7 +33,7 @@ ranking is tunable without code changes (feedback-runtime-knobs-no-restart).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -47,6 +47,15 @@ FLEET_SCOPE = "fleet"
 # "fresh" while still letting newer facts win ties.
 DEFAULT_RECENCY_HALFLIFE_DAYS = 120.0
 
+REQUIRED_PROVENANCE_FIELDS = (
+    "source_repo",
+    "source_path",
+    "source_commit",
+    "evidence",
+    "privacy",
+    "retention",
+)
+
 
 def _parse_iso(value: str) -> datetime:
     """Parse an ISO-8601 timestamp (tolerating a trailing ``Z``) as UTC-aware."""
@@ -57,6 +66,102 @@ def _parse_iso(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _first_present(data: dict[str, str], *keys: str) -> str | None:
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return value
+    return None
+
+
+def _split_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """Source/evidence envelope attached to every durable memory record."""
+
+    source_repo: str | None = None
+    source_path: str | None = None
+    source_commit: str | None = None
+    source_url: str | None = None
+    author: str | None = None
+    session_id: str | None = None
+    issue: str | None = None
+    evidence: str | None = None
+    privacy: str | None = None
+    retention: str | None = None
+    supersedes: list[str] = field(default_factory=list)
+    superseded_by: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: dict[str, str] | None,
+        *,
+        source_path: str | None = None,
+        source_repo: str | None = None,
+        source_commit: str | None = None,
+    ) -> Provenance:
+        data = dict(metadata or {})
+        return cls(
+            source_repo=source_repo or _first_present(data, "source_repo", "sourceRepo", "repo", "repository"),
+            source_path=source_path or _first_present(data, "source_path", "sourcePath"),
+            source_commit=source_commit
+            or _first_present(data, "source_commit", "sourceCommit", "commit", "git_commit"),
+            source_url=_first_present(data, "source_url", "sourceUrl", "url"),
+            author=_first_present(data, "author", "created_by", "createdBy"),
+            session_id=_first_present(data, "session_id", "sessionId", "originSessionId"),
+            issue=_first_present(data, "issue", "issue_url", "issueUrl"),
+            evidence=_first_present(data, "evidence", "evidence_class", "evidenceClass"),
+            privacy=_first_present(data, "privacy", "privacy_class", "privacyClass"),
+            retention=_first_present(data, "retention", "retention_policy", "retentionPolicy"),
+            supersedes=_split_list(_first_present(data, "supersedes")),
+            superseded_by=_split_list(_first_present(data, "superseded_by", "supersededBy")),
+        )
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any] | None) -> Provenance:
+        data = dict(value or {})
+        return cls(
+            source_repo=data.get("source_repo"),
+            source_path=data.get("source_path"),
+            source_commit=data.get("source_commit"),
+            source_url=data.get("source_url"),
+            author=data.get("author"),
+            session_id=data.get("session_id"),
+            issue=data.get("issue"),
+            evidence=data.get("evidence"),
+            privacy=data.get("privacy"),
+            retention=data.get("retention"),
+            supersedes=[str(item) for item in data.get("supersedes", [])],
+            superseded_by=[str(item) for item in data.get("superseded_by", [])],
+        )
+
+    def missing(self) -> list[str]:
+        return [field_name for field_name in REQUIRED_PROVENANCE_FIELDS if getattr(self, field_name) in (None, "")]
+
+    def to_view(self) -> dict[str, Any]:
+        return {
+            "source_repo": self.source_repo,
+            "source_path": self.source_path,
+            "source_commit": self.source_commit,
+            "source_url": self.source_url,
+            "author": self.author,
+            "session_id": self.session_id,
+            "issue": self.issue,
+            "evidence": self.evidence,
+            "privacy": self.privacy,
+            "retention": self.retention,
+            "supersedes": list(self.supersedes),
+            "superseded_by": list(self.superseded_by),
+            "missing": self.missing(),
+        }
 
 
 @dataclass(frozen=True)
@@ -76,6 +181,7 @@ class MemoryRecord:
     body: str
     embedding: list[float]
     updated_at: datetime
+    provenance: Provenance = field(default_factory=Provenance)
 
     def to_view(self) -> dict[str, Any]:
         return {
@@ -85,6 +191,7 @@ class MemoryRecord:
             "description": self.description,
             "body": self.body,
             "updated_at": self.updated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "provenance": self.provenance.to_view(),
         }
 
 

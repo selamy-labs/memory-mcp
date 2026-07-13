@@ -35,6 +35,7 @@ from typing import Any
 
 from memory_mcp.document import VALID_TYPES, DocumentError, Memory, parse, serialise, to_view
 from memory_mcp.storage import Clock, Storage, StorageError, SystemClock, safe_relpath
+from memory_mcp.vector_store import Provenance
 
 INDEX_FILENAME = "MEMORY.md"
 
@@ -121,6 +122,7 @@ class SearchHit:
     type: str
     path: str
     score: int
+    provenance: Provenance
 
     def to_view(self) -> dict[str, Any]:
         return {
@@ -129,6 +131,7 @@ class SearchHit:
             "type": self.type,
             "path": self.path,
             "score": self.score,
+            "provenance": self.provenance.to_view(),
         }
 
 
@@ -182,6 +185,7 @@ class MemoryStore:
                     type=memory.type,
                     path=filename,
                     score=score,
+                    provenance=Provenance.from_metadata(memory.extra_metadata, source_path=filename),
                 )
             )
 
@@ -220,6 +224,7 @@ class MemoryStore:
                     "description": memory.description,
                     "type": memory.type,
                     "path": filename,
+                    "provenance": Provenance.from_metadata(memory.extra_metadata, source_path=filename).to_view(),
                 }
             )
         items.sort(key=lambda item: item["name"])
