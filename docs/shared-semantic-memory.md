@@ -113,6 +113,23 @@ Recency is seeded from each file's own date (git last-commit date → a date in 
 filename → file mtime), so importing the existing corpus does not make old
 memories look brand-new.
 
+## Recall fixture gate
+
+Before fleet-memory routing becomes mandatory fleet-wide, changes must preserve
+the offline labeled recall fixture:
+
+```bash
+python -m memory_mcp.recall_eval fixtures/fleet_memory_recall_fixture.json
+```
+
+The fixture includes expected-positive and expected-negative cases. The JSON
+summary reports `case_count`, `positive_recall_passed`,
+`negative_isolation_passed`, and `overall_verdict`, so CI and live-canary tails
+can distinguish useful retrieval from wrong-context injection. This is the
+source-controlled fixture required by
+`selamy-labs/internal-agent-skills#58`; live MCP canaries should build on this
+fixture rather than replacing it.
+
 ## Embedder: $0 default, with a true-semantic upgrade path
 
 The default embedder is `hashing` — **$0, no API key, fully self-hosted**. It
