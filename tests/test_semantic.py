@@ -19,12 +19,27 @@ def _memory() -> SemanticMemory:
 
 def test_add_then_get_round_trips_body_verbatim():
     mem = _memory()
-    mem.add_memory("prefer-wif", "Prefer WIF over SA keys", "feedback", "Use keyless OIDC.\n\nRelated: [[x]]")
+    mem.add_memory(
+        "prefer-wif",
+        "Prefer WIF over SA keys",
+        "feedback",
+        "Use keyless OIDC.\n\nRelated: [[x]]",
+        provenance={
+            "source_repo": "selamy-labs/memory-mcp",
+            "source_path": "prefer-wif.md",
+            "source_commit": "abc123",
+            "evidence": "user-authored",
+            "privacy": "internal",
+            "retention": "standard",
+        },
+    )
     got = mem.get_memory("prefer-wif")
     assert got["name"] == "prefer-wif"
     assert got["type"] == "feedback"
     assert got["body"] == "Use keyless OIDC.\n\nRelated: [[x]]"
     assert got["group_id"] == FLEET_SCOPE
+    assert got["provenance"]["source_path"] == "prefer-wif.md"
+    assert got["provenance"]["missing"] == []
 
 
 def test_add_is_idempotent_and_reports_recency():
@@ -51,6 +66,8 @@ def test_search_default_scope_is_fleet():
     assert out["scopes"] == [FLEET_SCOPE]
     assert out["count"] == 1
     assert out["hits"][0]["name"] == "fleet-fact"
+    assert "provenance" in out["hits"][0]
+    assert "source_path" in out["hits"][0]["provenance"]["missing"]
 
 
 def test_search_includes_fleet_alongside_domain_scope():

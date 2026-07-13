@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from memory_mcp.vector_store import Provenance
+
 FRONTMATTER_FENCE = "---"
 
 # The memory contract: these metadata.type values are the recall vocabulary.
@@ -171,5 +173,6 @@ def to_view(memory: Memory, *, name: str, path: str) -> dict[str, Any]:
         "type": memory.type,
         "path": path,
         "metadata": dict(memory.extra_metadata),
+        "provenance": Provenance.from_metadata(memory.extra_metadata, source_path=path).to_view(),
         "body": memory.body,
     }

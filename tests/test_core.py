@@ -32,6 +32,8 @@ def test_search_ranks_name_match_above_body_match() -> None:
     # "laneq" is in one memory's name; "creds" only in another's body.
     out = store.search("laneq")
     assert out["hits"][0]["name"] == "laneq-lane-routing"
+    assert out["hits"][0]["provenance"]["source_path"] == "laneq-lane-routing.md"
+    assert "source_repo" in out["hits"][0]["provenance"]["missing"]
     assert out["total_matched"] >= 1
 
 
@@ -105,6 +107,7 @@ def test_get_returns_full_view() -> None:
     assert view["path"] == "feedback-prefer-wif.md"
     assert "WIF" in view["body"]
     assert view["metadata"]["node_type"] == "memory"
+    assert view["provenance"]["source_path"] == "feedback-prefer-wif.md"
 
 
 def test_get_missing_rejected() -> None:

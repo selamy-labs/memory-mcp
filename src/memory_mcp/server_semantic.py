@@ -161,6 +161,7 @@ def add_memory(
     body: str,
     group_id: str = FLEET_SCOPE,
     updated_at: str | None = None,
+    provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Index one memory into the shared store under a scope (``group_id``).
 
@@ -170,7 +171,17 @@ def add_memory(
     ``(group_id, name)`` -- re-adding replaces the record.
     """
     memory = _memory()
-    return _run(lambda: memory.add_memory(name, description, type, body, group_id=group_id, updated_at=updated_at))
+    return _run(
+        lambda: memory.add_memory(
+            name,
+            description,
+            type,
+            body,
+            group_id=group_id,
+            updated_at=updated_at,
+            provenance=provenance,
+        )
+    )
 
 
 def search_memory(

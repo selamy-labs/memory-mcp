@@ -11,6 +11,7 @@ from memory_mcp.vector_store import (
     FLEET_SCOPE,
     InMemoryVectorStore,
     MemoryRecord,
+    Provenance,
     _cosine,
     _keyword_score,
     _parse_iso,
@@ -30,6 +31,14 @@ def _record(name: str, text: str, *, group_id: str = FLEET_SCOPE, age_days: floa
         body=text,
         embedding=_EMBEDDER.embed(f"{name} {text}"),
         updated_at=_NOW - timedelta(days=age_days),
+        provenance=Provenance(
+            source_repo="selamy-labs/memory-mcp",
+            source_path=f"{name}.md",
+            source_commit="abc123",
+            evidence="frontmatter",
+            privacy="internal",
+            retention="standard",
+        ),
     )
 
 
@@ -131,3 +140,27 @@ def test_scored_record_view_has_components():
     view = hit.to_view()
     assert set(view) >= {"name", "group_id", "score", "semantic", "recency", "keyword", "updated_at"}
     assert view["updated_at"].endswith("Z")
+    assert view["provenance"]["source_path"] == "a.md"
+    assert view["provenance"]["missing"] == []
+
+
+def test_provenance_view_marks_missing_required_fields():
+    record = MemoryRecord(
+        group_id=FLEET_SCOPE,
+        name="legacy",
+        type="reference",
+        description="legacy",
+        body="legacy",
+        embedding=_EMBEDDER.embed("legacy"),
+        updated_at=_NOW,
+    )
+    view = record.to_view()
+    assert view["provenance"]["source_path"] is None
+    assert set(view["provenance"]["missing"]) == {
+        "source_repo",
+        "source_path",
+        "source_commit",
+        "evidence",
+        "privacy",
+        "retention",
+    }
