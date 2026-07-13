@@ -1,0 +1,72 @@
+{
+  "name": "fleet-memory-routing-recall-v1",
+  "description": "Offline labeled fixture for fleet-memory routing recall and wrong-context isolation.",
+  "records": [
+    {
+      "group_id": "fleet",
+      "name": "codegraph-first-navigation",
+      "type": "reference",
+      "description": "Use CodeGraph before grep when a repository has a .codegraph index",
+      "body": "When a repository contains a .codegraph directory, ask CodeGraph for symbol and call-path context before falling back to grep or direct file reads.",
+      "updated_at": "2026-07-12T18:01:13Z"
+    },
+    {
+      "group_id": "fleet",
+      "name": "github-token-hygiene",
+      "type": "feedback",
+      "description": "Prefer stored GitHub CLI credentials over inherited token environment variables",
+      "body": "On selamy-core, run gh commands with GH_TOKEN and GITHUB_TOKEN unset so a stale inherited token does not mask the valid stored CLI session.",
+      "updated_at": "2026-07-11T08:00:00Z"
+    },
+    {
+      "group_id": "trading",
+      "name": "nash-open-loop-theater",
+      "type": "project",
+      "description": "Nash changes must close the loop against Ready and trading state",
+      "body": "Open-loop PR and CI motion is not enough for Nash. Require live-overlay render checks, Argo convergence alarms, outcome probes, and trading-latch registry enforcement before claiming progress.",
+      "updated_at": "2026-07-13T06:15:00Z"
+    },
+    {
+      "group_id": "infra",
+      "name": "arc-runner-pending-attribution",
+      "type": "project",
+      "description": "Speedforge queue latency needs ARC status attribution before source patches",
+      "body": "Runner queue pressure should be attributed with AutoScalingRunnerSet pendingEphemeralRunners, currentRunners, runningEphemeralRunners, minRunners, and maxRunners before changing thresholds.",
+      "updated_at": "2026-07-13T17:20:35Z"
+    }
+  ],
+  "cases": [
+    {
+      "id": "positive-fleet-codegraph",
+      "query": "Should I use CodeGraph before grep in indexed repositories?",
+      "group_ids": [],
+      "include_fleet": true,
+      "expected": ["codegraph-first-navigation"],
+      "forbidden": ["nash-open-loop-theater", "arc-runner-pending-attribution"]
+    },
+    {
+      "id": "positive-trading-nash-latches",
+      "query": "How do we avoid Nash productivity theater around trading readiness?",
+      "group_ids": ["trading"],
+      "include_fleet": true,
+      "expected": ["nash-open-loop-theater"],
+      "forbidden": ["arc-runner-pending-attribution"]
+    },
+    {
+      "id": "negative-infra-query-must-not-return-trading",
+      "query": "Which ARC runner status fields explain Speedforge queue latency?",
+      "group_ids": ["infra"],
+      "include_fleet": true,
+      "expected": ["arc-runner-pending-attribution"],
+      "forbidden": ["nash-open-loop-theater"]
+    },
+    {
+      "id": "negative-domain-isolation-without-fleet",
+      "query": "Nash trading latch registry enforcement",
+      "group_ids": ["infra"],
+      "include_fleet": false,
+      "expected": [],
+      "forbidden": ["nash-open-loop-theater"]
+    }
+  ]
+}
