@@ -29,7 +29,7 @@ dependencies = []
 
 [project.optional-dependencies]
 mcp = [
-  "mcp>=1.2",
+  "mcp==1.28.1",
 ]
 # Vendor-neutral OpenTelemetry auto-instrumentation (#743). Install alongside
 # `mcp`, then run the server under `opentelemetry-instrument` (see README) so
@@ -47,8 +47,9 @@ pg = [
 ]
 test = [
   "coverage[toml]>=7.6",
-  "mcp>=1.2",
+  "mcp==1.28.1",
   "pytest>=8.3",
+  "pytest-asyncio>=0.24",
   "ruff>=0.8",
   "vulture>=2.14",
 ]
@@ -56,7 +57,7 @@ test = [
 [project.scripts]
 # Local stdio markdown read/write server (uvx against a local MEMORY_ROOT).
 memory-mcp = "memory_mcp.mcp_server:main"
-# Networked shared semantic memory server (pgvector backend; in-cluster service).
+# Dark shared-server entry point; refuses until reviewed production auth composition exists.
 memory-mcp-server = "memory_mcp.server_semantic:main"
 
 [project.urls]
@@ -75,6 +76,9 @@ source = ["memory_mcp"]
 show_missing = true
 skip_covered = true
 
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
@@ -88,7 +92,7 @@ max-complexity = 12
 [tool.ruff.lint.per-file-ignores]
 # S101: asserts are the point of tests. S108: tests use fixed /tmp-style fake
 # paths. S105/S106: tests use literal fake passwords to prove DSN/param handling.
-"tests/**" = ["S101", "S108", "S105", "S106"]
+"tests/**" = ["S101", "S108", "S105", "S106", "SIM117"]
 # S608: the only value ever interpolated into SQL here is the table name, which
 # is validated as a Python identifier in PgVectorStore.__init__ (isidentifier());
 # every user/runtime value is a bound %s parameter. So the f-strings are not an
