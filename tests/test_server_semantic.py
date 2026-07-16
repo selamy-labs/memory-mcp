@@ -3,58 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
 
 import memory_mcp.server_semantic as srv
 from memory_mcp.embeddings import HashingEmbedder
 from memory_mcp.semantic import SemanticMemory
-from memory_mcp.vector_store import FLEET_SCOPE, InMemoryVectorStore
-
-
-@pytest.fixture
-def offline_memory():
-    mem = SemanticMemory(HashingEmbedder(dim=128), InMemoryVectorStore())
-    srv.set_memory(mem)
-    yield mem
-    srv.set_memory(None)
-
-
-@pytest.mark.usefixtures("offline_memory")
-def test_add_search_get_round_trip():
-    out = srv.add_memory("a-mem", "a shared fleet fact", "feedback", "body here", updated_at="2026-01-01T00:00:00Z")
-    assert out["indexed"] is True
-    assert out["group_id"] == FLEET_SCOPE
-
-    found = srv.search_memory("shared fleet fact")
-    assert found["count"] == 1
-    assert found["hits"][0]["name"] == "a-mem"
-
-    got = srv.get_memory("a-mem")
-    assert got["body"] == "body here"
-
-
-@pytest.mark.usefixtures("offline_memory")
-def test_add_to_domain_scope():
-    srv.add_memory("t", "kalshi edge", "project", "details", group_id="trading")
-    assert srv.get_memory("t", group_id="trading")["name"] == "t"
-
-
-@pytest.mark.usefixtures("offline_memory")
-def test_search_can_exclude_fleet():
-    srv.add_memory("f", "alpha topic", "reference", "x")
-    srv.add_memory("i", "alpha topic", "reference", "x", group_id="infra")
-    out = srv.search_memory("alpha topic", group_ids=["infra"], include_fleet=False)
-    assert {h["name"] for h in out["hits"]} == {"i"}
-
-
-@pytest.mark.usefixtures("offline_memory")
-def test_tool_errors_map_to_toolerror():
-    with pytest.raises(ToolError):
-        srv.add_memory("", "d", "t", "b")
-    with pytest.raises(ToolError):
-        srv.search_memory("")
-    with pytest.raises(ToolError, match="no such memory"):
-        srv.get_memory("missing")
+from memory_mcp.vector_store import InMemoryVectorStore
 
 
 def test_build_embedder_hashing_default(monkeypatch):
@@ -205,15 +158,6 @@ def test_build_memory_composes_embedder_and_store(monkeypatch):
     assert isinstance(mem, SemanticMemory)
 
 
-def test_memory_lazy_builds_when_unset(monkeypatch):
-    srv.set_memory(None)
-    monkeypatch.setenv("MEMORY_EMBEDDER", "hashing")
-    monkeypatch.setenv("MEMORY_BACKEND", "memory")
-    mem = srv._memory()
-    assert isinstance(mem, SemanticMemory)
-    srv.set_memory(None)
-
-
 def test_bool_env(monkeypatch):
     monkeypatch.setenv("FLAG", "yes")
     assert srv._bool_env("FLAG") is True
@@ -221,21 +165,6 @@ def test_bool_env(monkeypatch):
     assert srv._bool_env("FLAG") is False
 
 
-def test_build_server_registers_three_tools(monkeypatch):
-    monkeypatch.setenv("MCP_PORT", "9099")
-    server = srv.build_server()
-    # FastMCP exposes registered tools via list_tools (async); just assert it built.
-    assert server.name == "memory-mcp-shared"
-
-
-def test_main_runs_with_configured_transport(monkeypatch):
-    calls = {}
-
-    class _FakeServer:
-        def run(self, transport):
-            calls["transport"] = transport
-
-    monkeypatch.setattr(srv, "build_server", lambda: _FakeServer())
-    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
-    srv.main()
-    assert calls["transport"] == "stdio"
+def test_main_refuses_startup_without_reviewed_production_composition():
+    with pytest.raises(SystemExit, match="production composition is not configured"):
+        srv.main()

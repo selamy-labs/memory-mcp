@@ -12,9 +12,13 @@ markdown-file read/write server used via ``uvx`` against a local ``MEMORY_ROOT``
 because this one is *stateful and shared*: it talks to Postgres + pgvector and
 serves many clients at once.
 
-Configuration is resolved at start time from the environment; **no credentials
-are baked into the image** -- the Postgres DSN is read from a value the
-deployment mounts from a Secret (ExternalSecrets ← Google Secret Manager):
+The raw memory factory still resolves indexer/library components from the
+environment. The shared-server entry point deliberately refuses startup until
+a separately reviewed production identity/grant composition supplies every
+required authorization dependency. This source slice selects no listener,
+credential, verifier, provider, tenant, audience, or application-body limit.
+
+The privileged raw memory factory understands:
 
 * ``MEMORY_BACKEND`` -- ``pgvector`` (default in-cluster) or ``memory`` (in-RAM,
   for a smoke test without a database).
@@ -24,10 +28,6 @@ deployment mounts from a Secret (ExternalSecrets ← Google Secret Manager):
   self-hosted) or ``openai`` (uses ``MEMORY_EMBEDDING_API_KEY`` /
   ``MEMORY_EMBEDDING_BASE_URL`` / ``MEMORY_EMBEDDING_MODEL`` /
   ``MEMORY_EMBEDDING_DIM`` at call time -- never image-baked).
-* ``MCP_TRANSPORT`` -- ``streamable-http`` (default for the service) or ``stdio``.
-* ``MCP_HOST`` / ``MCP_PORT`` -- bind address for the HTTP transport
-  (default ``0.0.0.0:8080``).
-
 ``MEMORY_ENSURE_SCHEMA=1`` makes the server create the pgvector schema on start
 (idempotent) so a fresh database is usable without a separate migration step.
 """
@@ -37,17 +37,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-try:
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.fastmcp.exceptions import ToolError
-except ModuleNotFoundError as error:  # pragma: no cover - import guard
-    raise SystemExit(
-        "memory-mcp server requires the 'mcp' package. Install it with: pip install 'memory-mcp[mcp]'"
-    ) from error
-
+from memory_mcp.authorized_server import AuthorizedMemoryMCP as AuthorizedMemoryMCP
+from memory_mcp.authorized_server import build_authorized_server as build_authorized_server
 from memory_mcp.embeddings import EMBEDDING_DIM, Embedder, HashingEmbedder
-from memory_mcp.semantic import SemanticMemory, SemanticMemoryError
-from memory_mcp.vector_store import FLEET_SCOPE, InMemoryVectorStore, VectorStore
+from memory_mcp.semantic import SemanticMemory
+from memory_mcp.vector_store import InMemoryVectorStore, VectorStore
 
 INSTRUCTIONS = (
     "Shared fleet semantic memory. Every agent and the orchestrator read and "
@@ -62,8 +56,6 @@ INSTRUCTIONS = (
     "shared-recall path. Recency reflects each memory's own date, not when it "
     "was indexed."
 )
-
-_MEMORY: SemanticMemory | None = None
 
 
 def _bool_env(name: str) -> bool:
@@ -134,99 +126,9 @@ def build_memory() -> SemanticMemory:
     return SemanticMemory(embedder, store)
 
 
-def set_memory(memory: SemanticMemory | None) -> None:
-    """Install the SemanticMemory the tools use (tests inject an offline one)."""
-    global _MEMORY
-    _MEMORY = memory
-
-
-def _memory() -> SemanticMemory:
-    global _MEMORY
-    if _MEMORY is None:
-        _MEMORY = build_memory()
-    return _MEMORY
-
-
-def _run(call: Any) -> dict[str, Any]:
-    try:
-        return call()
-    except SemanticMemoryError as error:
-        raise ToolError(str(error)) from error
-
-
-def add_memory(
-    name: str,
-    description: str,
-    type: str,
-    body: str,
-    group_id: str = FLEET_SCOPE,
-    updated_at: str | None = None,
-    provenance: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Index one memory into the shared store under a scope (``group_id``).
-
-    ``type`` is the memory's kind (user/feedback/project/reference). ``group_id``
-    is the scope (default the shared ``fleet`` scope). ``updated_at`` is an
-    optional ISO date used as the recency anchor (default now). Idempotent on
-    ``(group_id, name)`` -- re-adding replaces the record.
-    """
-    memory = _memory()
-    return _run(
-        lambda: memory.add_memory(
-            name,
-            description,
-            type,
-            body,
-            group_id=group_id,
-            updated_at=updated_at,
-            provenance=provenance,
-        )
-    )
-
-
-def search_memory(
-    query: str,
-    group_ids: list[str] | None = None,
-    include_fleet: bool = True,
-    type: str | None = None,
-    limit: int = 10,
-) -> dict[str, Any]:
-    """Search the shared memory across one or more scopes, ranked by relevance.
-
-    Blends semantic similarity, recency, and keyword overlap. Searches the shared
-    ``fleet`` scope by default; pass ``group_ids`` to add domain scopes.
-    ``include_fleet`` keeps the shared scope in the search. Optionally filter by
-    ``type``. Returns up to ``limit`` ranked hits with their component scores.
-    """
-    memory = _memory()
-    return _run(
-        lambda: memory.search_memory(query, group_ids=group_ids, include_fleet=include_fleet, type=type, limit=limit)
-    )
-
-
-def get_memory(name: str, group_id: str = FLEET_SCOPE) -> dict[str, Any]:
-    """Return one indexed memory's verbatim record by ``(group_id, name)``."""
-    memory = _memory()
-    return _run(lambda: memory.get_memory(name, group_id=group_id))
-
-
-TOOLS = (add_memory, search_memory, get_memory)
-
-
-def build_server() -> FastMCP:
-    """Build the shared semantic memory MCP server with its three tools."""
-    host = os.environ.get("MCP_HOST", "0.0.0.0")  # noqa: S104 - in-cluster service binds all interfaces by design
-    port = int(os.environ.get("MCP_PORT", "8080"))
-    server = FastMCP("memory-mcp-shared", instructions=INSTRUCTIONS, host=host, port=port)
-    for tool in TOOLS:
-        server.add_tool(tool)
-    return server
-
-
 def main() -> None:
-    """Run the shared semantic memory server (streamable-http by default)."""
-    transport = os.environ.get("MCP_TRANSPORT", "streamable-http").strip()
-    build_server().run(transport=transport)  # type: ignore[arg-type]
+    """Refuse startup until a separately reviewed production composition exists."""
+    raise SystemExit("authorized shared server production composition is not configured")
 
 
 class _UrllibTransport:  # pragma: no cover - exercised only against a real endpoint
