@@ -326,6 +326,7 @@ class StrictTool(Tool):
         return tool
 
     async def run(self, arguments: dict[str, Any], context: Context | None = None, convert_result: bool = False) -> Any:
+        del convert_result  # Required by the MCP 1.28.1 override signature; strict dispatch returns its exact result.
         try:
             return await self._dispatcher.dispatch(self.name, arguments, context)
         except InvalidToolInput as error:
