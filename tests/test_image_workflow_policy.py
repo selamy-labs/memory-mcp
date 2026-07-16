@@ -79,6 +79,24 @@ FORBIDDEN_MUTATIONS = [
         "push is not literal false",
         id="expression-can-enable-push",
     ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("          context: .\n", "          context: .\n          tags: example/image:latest\n"),
+        "configures image publication tags",
+        id="latest-tag",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("          context: .\n", "          context: .\n          tags: example/image:edge\n"),
+        "configures image publication tags",
+        id="other-mutable-tag",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "  build:\n    runs-on: ubuntu-latest\n    steps:",
+            "  publish:\n    uses: ./.github/workflows/publish-image.yml\n  build:\n    runs-on: ubuntu-latest\n    steps:",
+        ),
+        "calls a reusable workflow",
+        id="reusable-publication-workflow",
+    ),
 ]
 
 
@@ -122,6 +140,8 @@ def policy_violations(workflow: dict[str, Any]) -> list[str]:
     for job in jobs.values():
         if not isinstance(job, dict):
             continue
+        if "uses" in job:
+            violations.append("calls a reusable workflow")
         for step in job.get("steps", []):
             if not isinstance(step, dict):
                 continue
@@ -130,6 +150,8 @@ def policy_violations(workflow: dict[str, Any]) -> list[str]:
             inputs = step.get("with", {})
             if isinstance(inputs, dict) and "push" in inputs and inputs["push"] is not False:
                 violations.append("push is not literal false")
+            if isinstance(inputs, dict) and "tags" in inputs:
+                violations.append("configures image publication tags")
 
     return violations
 
