@@ -31,12 +31,53 @@ jobs:
 
 FORBIDDEN_MUTATIONS = [
     pytest.param(
+        SAFE_WORKFLOW.replace("  contents: read\n", "  contents: read\n  packages: write\n"),
+        "workflow requests packages: write",
+        id="packages-write",
+    ),
+    pytest.param(
         SAFE_WORKFLOW.replace(
             "      - uses: docker/setup-buildx-action@v3\n",
             "      - uses: docker/setup-buildx-action@v3\n      - uses: docker/login-action@v3\n",
         ),
         "authenticates to a container registry",
         id="registry-login-action",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("          push: false", "          push: true"),
+        "push is not literal false",
+        id="literal-push-true",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "          push: false", "          push: ${{ github.event_name == 'pull_request' }}"
+        ),
+        "push is not literal false",
+        id="publish-on-pull-request",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("          push: false", "          push: ${{ github.event_name == 'push' }}"),
+        "push is not literal false",
+        id="publish-on-push",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n").replace(
+            "          push: false", "          push: ${{ github.event_name == 'schedule' }}"
+        ),
+        "push is not literal false",
+        id="publish-on-schedule",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "          push: false", "          push: ${{ github.event_name == 'workflow_dispatch' }}"
+        ),
+        "push is not literal false",
+        id="publish-on-manual-dispatch",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("          push: false", "          push: ${{ vars.PUBLISH_IMAGE == 'true' }}"),
+        "push is not literal false",
+        id="expression-can-enable-push",
     ),
 ]
 
@@ -82,8 +123,13 @@ def policy_violations(workflow: dict[str, Any]) -> list[str]:
         if not isinstance(job, dict):
             continue
         for step in job.get("steps", []):
-            if isinstance(step, dict) and str(step.get("uses", "")).lower().startswith("docker/login-action@"):
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("uses", "")).lower().startswith("docker/login-action@"):
                 violations.append("authenticates to a container registry")
+            inputs = step.get("with", {})
+            if isinstance(inputs, dict) and "push" in inputs and inputs["push"] is not False:
+                violations.append("push is not literal false")
 
     return violations
 
