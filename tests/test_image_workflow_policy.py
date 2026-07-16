@@ -9,10 +9,13 @@ import yaml
 
 WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "build-image.yml"
 BOOL_TAG = "tag:yaml.org,2002:bool"
+CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+SETUP_BUILDX_ACTION = "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f"
+BUILD_PUSH_ACTION = "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
 ALLOWED_STEP_ACTIONS = {
-    "actions/checkout@v4",
-    "docker/build-push-action@v6",
-    "docker/setup-buildx-action@v3",
+    CHECKOUT_ACTION,
+    SETUP_BUILDX_ACTION,
+    BUILD_PUSH_ACTION,
 }
 EXPECTED_BUILD_INPUTS = {
     "cache-from": "type=gha",
@@ -26,10 +29,10 @@ REQUIRED_TRIGGERS = {
     "workflow_dispatch": {},
 }
 EXPECTED_BUILD_STEPS = [
-    {"uses": "actions/checkout@v4", "with": {}},
-    {"uses": "docker/setup-buildx-action@v3", "with": {}},
+    {"uses": CHECKOUT_ACTION, "with": {}},
+    {"uses": SETUP_BUILDX_ACTION, "with": {}},
     {
-        "uses": "docker/build-push-action@v6",
+        "uses": BUILD_PUSH_ACTION,
         "with": EXPECTED_BUILD_INPUTS,
     },
 ]
@@ -47,9 +50,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           push: false
@@ -84,7 +87,7 @@ FORBIDDEN_MUTATIONS = [
         id="missing-build-job",
     ),
     pytest.param(
-        SAFE_WORKFLOW.replace("      - uses: actions/checkout@v4\n", ""),
+        SAFE_WORKFLOW.replace(f"      - uses: {CHECKOUT_ACTION}\n", ""),
         "build steps differ from the reviewed sequence",
         id="missing-checkout-step",
     ),
@@ -123,16 +126,16 @@ FORBIDDEN_MUTATIONS = [
     ),
     pytest.param(
         SAFE_WORKFLOW.replace(
-            "      - uses: docker/setup-buildx-action@v3\n",
-            "      - uses: docker/setup-buildx-action@v3\n      - uses: docker/login-action@v3\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n      - uses: docker/login-action@v3\n",
         ),
         "authenticates to a container registry",
         id="registry-login-action",
     ),
     pytest.param(
         SAFE_WORKFLOW.replace(
-            "      - uses: docker/setup-buildx-action@v3\n",
-            "      - uses: docker/setup-buildx-action@v3\n      - run: docker login ghcr.io\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n      - run: docker login ghcr.io\n",
         ),
         "uses a shell step",
         id="shell-registry-login",
@@ -154,7 +157,8 @@ FORBIDDEN_MUTATIONS = [
     ),
     pytest.param(
         SAFE_WORKFLOW.replace(
-            "  workflow_dispatch:\n", "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch:\n"
+            "  workflow_dispatch: {}\n",
+            "  schedule:\n    - cron: '0 0 * * *'\n  workflow_dispatch: {}\n",
         ).replace("          push: false", "          push: ${{ github.event_name == 'schedule' }}"),
         "push is not literal false",
         id="publish-on-schedule",
@@ -221,11 +225,16 @@ FORBIDDEN_MUTATIONS = [
     ),
     pytest.param(
         SAFE_WORKFLOW.replace(
-            "      - uses: docker/setup-buildx-action@v3\n",
-            "      - uses: docker/setup-buildx-action@v3\n      - uses: ./.github/actions/publish-image\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n",
+            f"      - uses: {SETUP_BUILDX_ACTION}\n      - uses: ./.github/actions/publish-image\n",
         ),
         "uses an unreviewed action",
         id="unreviewed-publication-action",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(CHECKOUT_ACTION, "actions/checkout@v4"),
+        "build steps differ from the reviewed sequence",
+        id="mutable-action-tag",
     ),
 ]
 
@@ -339,9 +348,12 @@ def policy_violations(workflow: dict[str, Any]) -> list[str]:
     return violations
 
 
-def test_image_workflow_is_build_only() -> None:
+def test_image_workflow_matches_exact_build_only_contract() -> None:
     workflow = load_workflow(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
+    assert workflow["on"] == REQUIRED_TRIGGERS
+    build_steps = workflow["jobs"]["build"]["steps"]
+    assert [{"uses": step["uses"], "with": step.get("with", {})} for step in build_steps] == EXPECTED_BUILD_STEPS
     assert policy_violations(workflow) == []
 
 
