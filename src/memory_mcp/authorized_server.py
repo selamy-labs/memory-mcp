@@ -70,9 +70,39 @@ class _Field:
 
 _STRING = {"type": "string"}
 _NULLABLE_STRING = {"anyOf": [{"type": "string"}, {"type": "null"}]}
-_NULLABLE_OBJECT = {"anyOf": [{"type": "object"}, {"type": "null"}]}
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
 _INTEGER = {"type": "integer"}
+
+_PROVENANCE_FIELDS = (
+    *(
+        _Field(name, False, (str, type(None)), _NULLABLE_STRING)
+        for name in (
+            "source_repo",
+            "source_path",
+            "source_commit",
+            "source_url",
+            "author",
+            "session_id",
+            "issue",
+            "evidence",
+            "privacy",
+            "retention",
+        )
+    ),
+    _Field("supersedes", False, (list,), _STRING_ARRAY),
+    _Field("superseded_by", False, (list,), _STRING_ARRAY),
+)
+
+
+def _object_schema(fields: tuple[_Field, ...]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {field.name: copy.deepcopy(dict(field.schema)) for field in fields},
+        "additionalProperties": False,
+    }
+
+
+_NULLABLE_PROVENANCE = {"anyOf": [_object_schema(_PROVENANCE_FIELDS), {"type": "null"}]}
 
 _FIELDS: dict[str, tuple[_Field, ...]] = {
     "add_memory": (
@@ -82,7 +112,7 @@ _FIELDS: dict[str, tuple[_Field, ...]] = {
         _Field("body", True, (str,), _STRING),
         _Field("group_id", True, (str,), _STRING),
         _Field("updated_at", False, (str, type(None)), _NULLABLE_STRING),
-        _Field("provenance", False, (dict, type(None)), _NULLABLE_OBJECT),
+        _Field("provenance", False, (dict, type(None)), _NULLABLE_PROVENANCE),
     ),
     "get_memory": (
         _Field("name", True, (str,), _STRING),
@@ -98,12 +128,9 @@ _FIELDS: dict[str, tuple[_Field, ...]] = {
 
 
 def _schema(fields: tuple[_Field, ...]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {field.name: copy.deepcopy(dict(field.schema)) for field in fields},
-        "required": [field.name for field in fields if field.required],
-        "additionalProperties": False,
-    }
+    schema = _object_schema(fields)
+    schema["required"] = [field.name for field in fields if field.required]
+    return schema
 
 
 def generate_invocation_id() -> bytes:
@@ -151,6 +178,25 @@ def _nonempty(value: str) -> str:
     return cleaned
 
 
+def _validate_provenance(value: dict[str, Any] | None) -> Provenance:
+    if value is None:
+        return Provenance()
+    if type(value) is not dict or any(type(key) is not str for key in value):
+        raise _invalid()
+    allowed = {field.name for field in _PROVENANCE_FIELDS}
+    if set(value) - allowed:
+        raise _invalid()
+    for field in _PROVENANCE_FIELDS:
+        if field.name not in value:
+            continue
+        member = value[field.name]
+        if not any(type(member) is accepted for accepted in field.python_types):
+            raise _invalid()
+        if type(member) is list and any(type(item) is not str for item in member):
+            raise _invalid()
+    return Provenance.from_mapping(value)
+
+
 def _validate_semantic(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
     try:
         if tool_name == "add_memory":
@@ -163,7 +209,7 @@ def _validate_semantic(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[
                 "updated_at": (
                     _coerce_updated_at(arguments["updated_at"]) if arguments.get("updated_at") is not None else None
                 ),
-                "provenance": Provenance.from_mapping(arguments.get("provenance")),
+                "provenance": _validate_provenance(arguments.get("provenance")),
             }
             return normalized, (normalized["group_id"],)
         if tool_name == "get_memory":
@@ -421,9 +467,20 @@ def _reject_duplicate_arguments(envelope: _Pairs) -> None:
     if len(argument_values) > 1:
         raise _invalid()
     if argument_values and isinstance(argument_values[0], _Pairs):
-        names = [key for key, _ in argument_values[0]]
+        _reject_duplicate_members(argument_values[0])
+
+
+def _reject_duplicate_members(value: Any) -> None:
+    if isinstance(value, _Pairs):
+        names = [key for key, _ in value]
         if len(names) != len(set(names)):
             raise _invalid()
+        for _, member in value:
+            _reject_duplicate_members(member)
+        return
+    if isinstance(value, list):
+        for member in value:
+            _reject_duplicate_members(member)
 
 
 class _CapturedManagerEndpoint:

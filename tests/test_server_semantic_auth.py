@@ -20,6 +20,7 @@ from mcp.shared.context import RequestContext
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
 
+import memory_mcp.authorized_server as authorized_server
 from memory_mcp.authorization import AuthorizationDecisionSet, CapabilityDecision, Effect
 from memory_mcp.authorized_server import ApplicationJSONAdapter
 from memory_mcp.embeddings import HashingEmbedder
@@ -33,6 +34,34 @@ ISSUER = "https://issuer.example/"
 RESOURCE = "https://memory.example/mcp"
 AUDIENCE = "memory-mcp"
 TENANT = "tenant-1"
+
+BOUNDARY_VERSIONS = {
+    "mcp": "1.28.1",
+    "starlette": "1.3.1",
+    "pydantic": "2.13.4",
+    "anyio": "4.14.2",
+    "httpx": "0.28.1",
+    "sse-starlette": "3.4.5",
+    "pydantic-settings": "2.14.2",
+    "uvicorn": "0.51.0",
+    "python-multipart": "0.0.32",
+    "authlib": "1.6.9",
+    "cryptography": "49.0.0",
+}
+
+PROVENANCE_SCALAR_FIELDS = (
+    "source_repo",
+    "source_path",
+    "source_commit",
+    "source_url",
+    "author",
+    "session_id",
+    "issue",
+    "evidence",
+    "privacy",
+    "retention",
+)
+PROVENANCE_LIST_FIELDS = ("supersedes", "superseded_by")
 
 
 def claims(actor_id="actor-1"):
@@ -189,6 +218,20 @@ def test_factory_builds_only_the_closed_authenticated_wrapper_and_exact_schemas(
     assert all(
         "context" not in schema["properties"] and "ctx" not in schema["properties"] for schema in schemas.values()
     )
+    provenance = schemas["add_memory"]["properties"]["provenance"]
+    assert provenance == {
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    **{name: {"anyOf": [{"type": "string"}, {"type": "null"}]} for name in PROVENANCE_SCALAR_FIELDS},
+                    **{name: {"type": "array", "items": {"type": "string"}} for name in PROVENANCE_LIST_FIELDS},
+                },
+                "additionalProperties": False,
+            },
+            {"type": "null"},
+        ]
+    }
 
 
 @pytest.mark.asyncio
@@ -203,7 +246,7 @@ async def test_pin_level_composition_initializes_once_and_has_no_exported_bypass
 
     monkeypatch.setattr(FastMCP, "streamable_http_app", counted)
     server = build()
-    assert importlib.metadata.version("mcp") == "1.28.1"
+    assert {package: importlib.metadata.version(package) for package in BOUNDARY_VERSIONS} == BOUNDARY_VERSIONS
     assert calls == 1
     assert {name for name in dir(AuthorizedMemoryMCP) if not name.startswith("_")} == {
         "app",
@@ -219,6 +262,100 @@ async def test_pin_level_composition_initializes_once_and_has_no_exported_bypass
     default_tool = Tool.from_function(permissive)
     assert default_tool.parameters.get("additionalProperties") is not False
     assert await default_tool.run({"name": "n", "forged": "ignored"}) == "n"
+
+
+@pytest.mark.asyncio
+async def test_pin_boundary_lifespan_routes_sessions_streaming_headers_batch_and_non_tool_forwarding():
+    provider = Provider()
+    factory_calls = []
+    server = build(grant_provider=provider, memory_factory=lambda: factory_calls.append(True))
+    assert [route.path for route in server.app.routes] == [
+        "/mcp",
+        "/.well-known/oauth-protected-resource/mcp",
+    ]
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1"},
+        },
+    }
+    headers = {
+        "Authorization": "Bearer actor-1",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    async with server.app.router.lifespan_context(server.app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server.app), base_url="http://localhost:8000"
+        ) as client:
+            initialized = await client.post("/mcp", json=initialize, headers=headers)
+            session_id = initialized.headers["mcp-session-id"]
+            ping = await client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 2, "method": "ping"},
+                headers={**headers, "mcp-session-id": session_id},
+            )
+            batch = await client.post("/mcp", json=[initialize], headers=headers)
+            sse_only = await client.post("/mcp", json=initialize, headers={**headers, "Accept": "text/event-stream"})
+    assert initialized.status_code == 200
+    assert initialized.headers["content-type"] == "application/json"
+    assert type(session_id) is str and session_id
+    assert ping.status_code == 200
+    assert ping.headers["content-type"] == "application/json"
+    assert ping.headers["mcp-session-id"] == session_id
+    assert batch.status_code == 400
+    assert batch.json() == {"error": "invalid tool input"}
+    assert sse_only.status_code == 406
+    assert sse_only.headers["content-type"] == "application/json"
+    assert provider.calls == []
+    assert factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_application_json_adapter_reads_once_and_replays_canonical_body_to_captured_app():
+    received = []
+    sent = []
+
+    async def captured_app(scope, receive, send):
+        received.append((scope, await receive(), await receive()))
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    adapter = ApplicationJSONAdapter(captured_app, 512)
+    messages = iter(
+        (
+            {"type": "http.request", "body": b'{ "params": {"arguments": {"group_id":', "more_body": True},
+            {"type": "http.request", "body": b'"fleet", "name":"n"}}, "method":"tools/call"}', "more_body": False},
+        )
+    )
+
+    async def receive():
+        return next(messages)
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": [(b"x-test", b"preserved")]}
+    await adapter(scope, receive, send)
+    assert received == [
+        (
+            scope,
+            {
+                "type": "http.request",
+                "body": b'{"method":"tools/call","params":{"arguments":{"group_id":"fleet","name":"n"}}}',
+                "more_body": False,
+            },
+            {"type": "http.disconnect"},
+        )
+    ]
+    assert sent == [
+        {"type": "http.response.start", "status": 204, "headers": []},
+        {"type": "http.response.body", "body": b""},
+    ]
 
 
 @pytest.mark.parametrize("limit", [True, False, 0, -1, 1.5, "100"])
@@ -518,6 +655,182 @@ async def test_typed_semantic_validation_completes_before_context_provider_or_me
     assert factory_calls == []
 
 
+def add_arguments(provenance):
+    return {
+        "name": "n",
+        "description": "d",
+        "type": "reference",
+        "body": "b",
+        "group_id": "fleet",
+        "provenance": provenance,
+    }
+
+
+VALID_PROVENANCE_CASES = [(None, "source_repo", None), ({}, "source_repo", None)]
+VALID_PROVENANCE_CASES.extend(({field: None}, field, None) for field in PROVENANCE_SCALAR_FIELDS)
+VALID_PROVENANCE_CASES.extend(
+    ({field: f"value-{field}"}, field, f"value-{field}") for field in PROVENANCE_SCALAR_FIELDS
+)
+VALID_PROVENANCE_CASES.extend(
+    ({field: ["memory-a", "memory-b"]}, field, ["memory-a", "memory-b"]) for field in PROVENANCE_LIST_FIELDS
+)
+VALID_PROVENANCE_CASES.extend(({field: []}, field, []) for field in PROVENANCE_LIST_FIELDS)
+
+MALFORMED_PROVENANCE_CASES = [({"unknown": "value"}, "unknown-member")]
+MALFORMED_PROVENANCE_CASES.extend(
+    ({field: value}, f"{field}-{type(value).__name__}")
+    for field in PROVENANCE_SCALAR_FIELDS
+    for value in (1, 1.5, True, [], {})
+)
+MALFORMED_PROVENANCE_CASES.extend(
+    ({field: value}, f"{field}-{type(value).__name__}")
+    for field in PROVENANCE_LIST_FIELDS
+    for value in ("memory-a", {"memory-a": True}, True, 1, 1.5, None)
+)
+MALFORMED_PROVENANCE_CASES.extend(
+    ({field: [value]}, f"{field}-element-{type(value).__name__}")
+    for field in PROVENANCE_LIST_FIELDS
+    for value in (True, 1, 1.5, None, {}, [])
+)
+
+
+class FailureLayerSpy:
+    def __init__(self):
+        self.calls = {
+            name: 0
+            for name in (
+                "context",
+                "provider",
+                "factory",
+                "embedder",
+                "schema",
+                "store",
+                "sql",
+                "result",
+                "observation",
+            )
+        }
+
+    def memory_factory(self):
+        self.calls["factory"] += 1
+        raise AssertionError("memory factory ran for invalid provenance")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("provenance", "field", "expected"), VALID_PROVENANCE_CASES)
+async def test_direct_strict_tool_accepts_every_closed_provenance_field(provenance, field, expected):
+    provider = Provider()
+    store = memory()
+    server = build(grant_provider=provider, memory_factory=lambda: store)
+    result = await registered_call(server, "add_memory", add_arguments(provenance), context=current_context())
+    assert result["provenance"][field] == expected
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provenance", "case"), MALFORMED_PROVENANCE_CASES, ids=lambda value: value if isinstance(value, str) else None
+)
+async def test_direct_strict_tool_rejects_every_malformed_provenance_before_all_layers(provenance, case, monkeypatch):
+    del case
+    layers = FailureLayerSpy()
+    provider = Provider()
+
+    def forbidden_context(*args, **kwargs):
+        del args, kwargs
+        layers.calls["context"] += 1
+        raise AssertionError("context extraction ran for invalid provenance")
+
+    monkeypatch.setattr(authorized_server, "_current_principal", forbidden_context)
+    server = build(grant_provider=provider, memory_factory=layers.memory_factory)
+    with pytest.raises(ToolError, match="invalid tool input"):
+        await registered_call(server, "add_memory", add_arguments(provenance), context=object())
+    layers.calls["provider"] = len(provider.calls)
+    assert layers.calls == {name: 0 for name in layers.calls}
+
+
+@pytest.mark.asyncio
+async def test_direct_strict_tool_rejects_nested_builtin_subclasses_before_context_provider_or_memory(monkeypatch):
+    class StringSubclass(str):
+        pass
+
+    class DictSubclass(dict):
+        pass
+
+    class ListSubclass(list):
+        pass
+
+    layers = FailureLayerSpy()
+    provider = Provider()
+
+    def forbidden_context(*args, **kwargs):
+        del args, kwargs
+        layers.calls["context"] += 1
+        raise AssertionError("context extraction ran for invalid provenance")
+
+    monkeypatch.setattr(authorized_server, "_current_principal", forbidden_context)
+    server = build(grant_provider=provider, memory_factory=layers.memory_factory)
+    cases = (
+        DictSubclass(source_repo="repo"),
+        {"source_repo": StringSubclass("repo")},
+        {"source_repo": b"repo"},
+        {"supersedes": ListSubclass(["memory-a"])},
+        {"supersedes": ("memory-a",)},
+        {"supersedes": [StringSubclass("memory-a")]},
+    )
+    for provenance in cases:
+        with pytest.raises(ToolError, match="invalid tool input"):
+            await registered_call(server, "add_memory", add_arguments(provenance), context=object())
+    layers.calls["provider"] = len(provider.calls)
+    assert layers.calls == {name: 0 for name in layers.calls}
+
+
+@pytest.mark.asyncio
+async def test_wrapped_asgi_accepts_every_closed_provenance_field():
+    provider = Provider()
+    store = memory()
+    server = build(grant_provider=provider, memory_factory=lambda: store)
+    async with server.app.router.lifespan_context(server.app):
+        async with client_factory(server.app)(headers={"Authorization": "Bearer actor-1"}) as http_client:
+            async with streamable_http_client("http://localhost:8000/mcp", http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    for index, (provenance, field, expected) in enumerate(VALID_PROVENANCE_CASES):
+                        result = await session.call_tool(
+                            "add_memory", {**add_arguments(provenance), "name": f"memory-{index}"}
+                        )
+                        assert not result.isError
+                        stored = store.get_memory(f"memory-{index}", group_id="fleet")
+                        assert stored["provenance"][field] == expected
+    assert len(provider.calls) == len(VALID_PROVENANCE_CASES)
+
+
+@pytest.mark.asyncio
+async def test_wrapped_asgi_rejects_every_malformed_provenance_before_all_layers(monkeypatch):
+    layers = FailureLayerSpy()
+    provider = Provider()
+
+    def forbidden_context(*args, **kwargs):
+        del args, kwargs
+        layers.calls["context"] += 1
+        raise AssertionError("context extraction ran for invalid provenance")
+
+    monkeypatch.setattr(authorized_server, "_current_principal", forbidden_context)
+    server = build(grant_provider=provider, memory_factory=layers.memory_factory)
+    async with server.app.router.lifespan_context(server.app):
+        async with client_factory(server.app)(headers={"Authorization": "Bearer actor-1"}) as http_client:
+            async with streamable_http_client("http://localhost:8000/mcp", http_client=http_client) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    results = [
+                        await session.call_tool("add_memory", add_arguments(provenance))
+                        for provenance, _ in MALFORMED_PROVENANCE_CASES
+                    ]
+    assert all(result.isError for result in results)
+    layers.calls["provider"] = len(provider.calls)
+    assert layers.calls == {name: 0 for name in layers.calls}
+
+
 @pytest.mark.asyncio
 async def test_issue_32_authorization_table_add_get_search_runs_only_after_exact_authorization():
     provider = Provider()
@@ -762,6 +1075,31 @@ async def test_wrapped_raw_duplicate_arguments_key_and_valid_plus_alias_fail_clo
     assert response.status_code in (200, 400)
     assert provider.calls == []
     assert factory_calls == []
+
+
+@pytest.mark.asyncio
+async def test_wrapped_asgi_rejects_duplicate_nested_provenance_member_before_provider_and_all_memory_layers():
+    layers = FailureLayerSpy()
+    provider = Provider()
+    server = build(grant_provider=provider, memory_factory=layers.memory_factory)
+    body = (
+        b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"add_memory","arguments":'
+        b'{"name":"n","description":"d","type":"reference","body":"b","group_id":"fleet",'
+        b'"provenance":{"source_repo":"first","source_repo":"second"}}}}'
+    )
+    headers = {
+        "Authorization": "Bearer actor-1",
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    }
+    async with server.app.router.lifespan_context(server.app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=server.app), base_url="http://localhost:8000"
+        ) as client:
+            response = await client.post("/mcp", content=body, headers=headers)
+    assert response.status_code == 400
+    layers.calls["provider"] = len(provider.calls)
+    assert layers.calls == {name: 0 for name in layers.calls}
 
 
 @pytest.mark.asyncio
