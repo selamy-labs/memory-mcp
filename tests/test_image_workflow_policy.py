@@ -20,12 +20,27 @@ EXPECTED_BUILD_INPUTS = {
     "context": ".",
     "push": False,
 }
+REQUIRED_TRIGGERS = {
+    "pull_request": {"branches": ["main"]},
+    "push": {"branches": ["main"]},
+    "workflow_dispatch": {},
+}
+EXPECTED_BUILD_STEPS = [
+    {"uses": "actions/checkout@v4", "with": {}},
+    {"uses": "docker/setup-buildx-action@v3", "with": {}},
+    {
+        "uses": "docker/build-push-action@v6",
+        "with": EXPECTED_BUILD_INPUTS,
+    },
+]
 SAFE_WORKFLOW = """
 name: Build Image
 on:
   pull_request:
+    branches: [main]
   push:
-  workflow_dispatch:
+    branches: [main]
+  workflow_dispatch: {}
 permissions:
   contents: read
 jobs:
@@ -43,6 +58,36 @@ jobs:
 """
 
 FORBIDDEN_MUTATIONS = [
+    pytest.param(
+        SAFE_WORKFLOW.replace("  pull_request:\n    branches: [main]\n", ""),
+        "triggers are not exactly PR/main/manual",
+        id="missing-pull-request-trigger",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("  push:\n    branches: [main]\n", "  push:\n    branches: [release]\n"),
+        "triggers are not exactly PR/main/manual",
+        id="missing-main-push-trigger",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("  workflow_dispatch: {}\n", ""),
+        "triggers are not exactly PR/main/manual",
+        id="missing-manual-trigger",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("  workflow_dispatch: {}", "  schedule:\n    - cron: '0 0 * * *'"),
+        "triggers are not exactly PR/main/manual",
+        id="schedule-replaces-manual-trigger",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.split("jobs:", maxsplit=1)[0] + "jobs: {}\n",
+        "jobs are not exactly the reviewed build job",
+        id="missing-build-job",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("      - uses: actions/checkout@v4\n", ""),
+        "build steps differ from the reviewed sequence",
+        id="missing-checkout-step",
+    ),
     pytest.param(
         SAFE_WORKFLOW.replace("  contents: read\n", "  contents: read\n  packages: write\n"),
         "workflow requests packages: write",
@@ -250,9 +295,36 @@ def step_violations(step: dict[str, Any]) -> list[str]:
     return violations
 
 
+def build_contract_violations(workflow: dict[str, Any], jobs: Any) -> list[str]:
+    violations: list[str] = []
+    if workflow.get("on") != REQUIRED_TRIGGERS:
+        violations.append("triggers are not exactly PR/main/manual")
+    if not isinstance(jobs, dict) or set(jobs) != {"build"}:
+        violations.append("jobs are not exactly the reviewed build job")
+        return violations
+
+    build_job = jobs["build"]
+    if not isinstance(build_job, dict) or set(build_job) != {"runs-on", "steps"}:
+        violations.append("build job differs from the reviewed contract")
+        return violations
+    if build_job["runs-on"] != "ubuntu-latest":
+        violations.append("build runner differs from the reviewed contract")
+
+    steps = build_job["steps"]
+    normalized_steps = [
+        {"uses": step.get("uses"), "with": step.get("with", {})} if isinstance(step, dict) else None for step in steps
+    ]
+    if normalized_steps != EXPECTED_BUILD_STEPS:
+        violations.append("build steps differ from the reviewed sequence")
+    if any(isinstance(step, dict) and set(step) - {"name", "uses", "with"} for step in steps):
+        violations.append("build step contains unreviewed configuration")
+    return violations
+
+
 def policy_violations(workflow: dict[str, Any]) -> list[str]:
     jobs = workflow.get("jobs", {})
-    violations = permission_violations(workflow, jobs)
+    violations = build_contract_violations(workflow, jobs)
+    violations.extend(permission_violations(workflow, jobs))
 
     for job in jobs.values():
         if not isinstance(job, dict):
