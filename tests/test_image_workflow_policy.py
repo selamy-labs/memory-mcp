@@ -14,6 +14,12 @@ ALLOWED_STEP_ACTIONS = {
     "docker/build-push-action@v6",
     "docker/setup-buildx-action@v3",
 }
+EXPECTED_BUILD_INPUTS = {
+    "cache-from": "type=gha",
+    "cache-to": "type=gha,mode=max",
+    "context": ".",
+    "push": False,
+}
 SAFE_WORKFLOW = """
 name: Build Image
 on:
@@ -32,6 +38,8 @@ jobs:
         with:
           context: .
           push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 """
 
 FORBIDDEN_MUTATIONS = [
@@ -112,6 +120,30 @@ FORBIDDEN_MUTATIONS = [
     ),
     pytest.param(
         SAFE_WORKFLOW.replace(
+            "          push: false\n",
+            "          push: false\n          outputs: type=registry,name=ghcr.io/selamy-labs/memory-mcp:escape\n",
+        ),
+        "build action inputs differ from the reviewed build-only contract",
+        id="registry-output",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "          push: false\n",
+            "          push: false\n"
+            "          outputs: type=image,name=ghcr.io/selamy-labs/memory-mcp:escape,push=true\n",
+        ),
+        "build action inputs differ from the reviewed build-only contract",
+        id="image-output-push-true",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "          cache-to: type=gha,mode=max", "          cache-to: type=registry,ref=ghcr.io/x/cache"
+        ),
+        "build action inputs differ from the reviewed build-only contract",
+        id="registry-cache-export",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
             "  build:\n    runs-on: ubuntu-latest\n    steps:",
             "  publish:\n    uses: ./.github/workflows/publish-image.yml\n"
             "  build:\n    runs-on: ubuntu-latest\n    steps:",
@@ -184,6 +216,8 @@ def step_violations(step: dict[str, Any]) -> list[str]:
         not isinstance(inputs, dict) or inputs.get("push") is not False
     ):
         violations.append("push is not literal false")
+    if action.startswith("docker/build-push-action@") and inputs != EXPECTED_BUILD_INPUTS:
+        violations.append("build action inputs differ from the reviewed build-only contract")
     if isinstance(inputs, dict) and "tags" in inputs:
         violations.append("configures image publication tags")
     return violations
