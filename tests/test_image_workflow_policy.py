@@ -54,6 +54,29 @@ FORBIDDEN_MUTATIONS = [
         id="other-write-permission",
     ),
     pytest.param(
+        SAFE_WORKFLOW.replace("permissions:\n  contents: read\n", ""),
+        "top-level permissions are not exactly contents: read",
+        id="missing-top-level-permissions",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("permissions:\n  contents: read", "permissions: read-all"),
+        "top-level permissions are not exactly contents: read",
+        id="string-permissions-shorthand",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace("  contents: read\n", "  contents: read\n  actions: read\n"),
+        "top-level permissions are not exactly contents: read",
+        id="extra-top-level-permission",
+    ),
+    pytest.param(
+        SAFE_WORKFLOW.replace(
+            "  build:\n    runs-on: ubuntu-latest\n",
+            "  build:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
+        ),
+        "job overrides permissions",
+        id="job-permissions-override",
+    ),
+    pytest.param(
         SAFE_WORKFLOW.replace(
             "      - uses: docker/setup-buildx-action@v3\n",
             "      - uses: docker/setup-buildx-action@v3\n      - uses: docker/login-action@v3\n",
@@ -187,6 +210,8 @@ def load_workflow(text: str) -> dict[str, Any]:
 
 def permission_violations(workflow: dict[str, Any], jobs: dict[str, Any]) -> list[str]:
     violations: list[str] = []
+    if workflow.get("permissions") != {"contents": "read"}:
+        violations.append("top-level permissions are not exactly contents: read")
     permission_blocks = [("workflow", workflow.get("permissions", {}))]
     permission_blocks.extend(
         (f"job {name}", job.get("permissions", {})) for name, job in jobs.items() if isinstance(job, dict)
@@ -199,6 +224,8 @@ def permission_violations(workflow: dict[str, Any], jobs: dict[str, Any]) -> lis
             isinstance(permissions, dict) and any(value == "write" for value in permissions.values())
         ):
             violations.append(f"{location} grants write permission")
+    if any(isinstance(job, dict) and "permissions" in job for job in jobs.values()):
+        violations.append("job overrides permissions")
     return violations
 
 
